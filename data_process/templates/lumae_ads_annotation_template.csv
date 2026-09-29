@@ -1,0 +1,4 @@
+sample_id,video_filename,vid,product_category,query,duration_seconds,gt_start_seconds,gt_end_seconds,annotator_id,annotation_notes,review_status
+lumae_ads_000001,mini_vacuum_ad_01.mp4,vacuum_000001,cleaning_gadget,The creator shows how the vacuum works.,19.13,6.0,14.0,ann_lead,Clear demonstration of suction on couch cushions.,ADJUDICATED
+lumae_ads_000002,portable_blender_02.mp4,blender_000002,kitchen_appliance,The creator demonstrates how the blender blends fruit.,24.50,4.2,11.8,ann_01,Initial ingredient load to button press.,REVIEWED
+lumae_ads_000003,led_strip_light_03.mp4,led_000003,home_decor,The creator turns on the color changing lights with the remote.,15.00,2.1,8.0,ann_02,Remote press and wall lighting response.,DRAFT
