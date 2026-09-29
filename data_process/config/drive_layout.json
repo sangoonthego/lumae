@@ -1,0 +1,20 @@
+{
+  "root": "CV_Lumae",
+  "directories": {
+    "qvhighlights": "Data/QVHighlights",
+    "ego4d": "Data/Ego4D",
+    "lumae_ads": "Data/LumaeAds",
+    "canonical": "Data/canonical",
+    "features_ego4d_video": "Features/Ego4D/video",
+    "features_ego4d_text": "Features/Ego4D/text",
+    "stage_a_checkpoints": "Checkpoints/M1",
+    "stage_a_experiments": "Experiments/M1"
+  },
+  "lumae_ads_subdirectories": [
+    "Data/LumaeAds/videos",
+    "Data/LumaeAds/annotations",
+    "Data/LumaeAds/canonical",
+    "Data/LumaeAds/reports",
+    "Data/LumaeAds/manifests"
+  ]
+}

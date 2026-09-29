@@ -1,0 +1,15 @@
+{
+  "local": {
+    "raw_root": "./local_data/raw",
+    "canonical_root": "./local_data/canonical",
+    "reports_root": "./local_data/reports",
+    "features_root": "./local_data/features"
+  },
+  "drive_targets": {
+    "root": "CV_Lumae",
+    "data": "CV_Lumae/Data",
+    "features": "CV_Lumae/Features",
+    "checkpoints": "CV_Lumae/Checkpoints",
+    "experiments": "CV_Lumae/Experiments"
+  }
+}
