@@ -26,10 +26,18 @@ The stable [semantics](docs/contracts/lumae-semantics-v1.md) and [API v1 contrac
 Optional provenance links use `NEXT_PUBLIC_LUMAE_PROJECT_REPO_URL`, `NEXT_PUBLIC_LUMAE_COLAB_URL`, and `NEXT_PUBLIC_MOMENT_DETR_REPO_URL`.
 
 The [Colab adapter guide](backend/colab/README.md) covers model paths, startup, CORS, and a temporary HTTPS tunnel. The [M0 integration record](docs/integration/m0-baseline-vertical-slice.md) tracks the real vertical slice gate.
-
 ## Research safeguards
 
 Benchmark metrics are model-level data and never describe the uploaded video's accuracy. Window confidence is a ranking/matching signal. Raw saliency may be negative and is preserved; normalization is derived only for display. Hook Candidate is a nullable Lumae heuristic. The current CLIP-only baseline is primarily visual, samples at about two-second resolution, and accepts videos up to 150 seconds.
+
+## Research Data Pipeline
+
+Offline research data preparation and model fine-tuning are separated from product serving:
+
+- `data_process/`: CPU-only offline dataset preparation, schema validation, leakage prevention, and manifest generation.
+- `backend/colab/`: FastAPI model serving adapter for interactive inference.
+- Future Colab notebook: GPU-side feature extraction and Moment-DETR fine-tuning.
+- See the [operational boundary document](docs/research/local-colab-boundary.md) and [Stage A audit](docs/research/project-audit-stage-a.md).
 
 ## Verify
 
