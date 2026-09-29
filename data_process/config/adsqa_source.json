@@ -1,0 +1,25 @@
+{
+  "source_name": "adsqa",
+  "upstream_repository": "https://github.com/TsinghuaC3I/AdsQA",
+  "huggingface_dataset": "https://huggingface.co/datasets/TsinghuaC3I/AdsQA",
+  "upstream_download_script": "https://raw.githubusercontent.com/TsinghuaC3I/AdsQA/main/preprocess/download_videos.py",
+  "urls": {
+    "video_urls": "https://huggingface.co/datasets/TsinghuaC3I/AdsQA/resolve/main/video_urls.json",
+    "train_annotations": "https://huggingface.co/datasets/TsinghuaC3I/AdsQA/resolve/main/train.json",
+    "test_annotations": "https://huggingface.co/datasets/TsinghuaC3I/AdsQA/resolve/main/testset_question.json"
+  },
+  "candidate_categories": [
+    "Household Supply",
+    "Electronics",
+    "Cleaning",
+    "Home appliance",
+    "Small appliance",
+    "Product demonstration",
+    "Tools & Hardware",
+    "Kitchen Appliance",
+    "Personal Care Gadget"
+  ],
+  "pilot_target_size": 50,
+  "max_duration_seconds": 150.0,
+  "notes": "Official AdsQA video URLs hosted via Ads of the World (AotW CDN). Original videos not redistributed in Git per upstream Terms of Use."
+}

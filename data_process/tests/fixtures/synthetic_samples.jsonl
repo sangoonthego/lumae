@@ -1,0 +1,5 @@
+{"qid": 101, "vid": "video_alpha", "query": "The person picks up a coffee cup", "duration": 30.0, "relevant_windows": [[5.0, 10.0]], "source": "synthetic"}
+{"qid": 102, "vid": "video_alpha", "query": "The person pours milk into the mug", "duration": 30.0, "relevant_windows": [[12.5, 18.0]], "source": "synthetic"}
+{"qid": 103, "vid": "video_beta", "query": "A dog runs across the garden", "duration": 15.0, "relevant_windows": [[2.0, 7.5]], "source": "synthetic"}
+{"qid": 104, "vid": "video_gamma", "query": "Someone opens the car door", "duration": 45.0, "relevant_windows": [[10.0, 15.0], [25.0, 30.0]], "source": "synthetic"}
+{"qid": 105, "vid": "video_delta", "query": "Cutting a lemon on a wooden cutting board", "duration": 20.0, "relevant_windows": [[3.0, 9.0]], "saliency_scores": [[4.0, 3.0, 4.0], [3.0, 2.0, 3.0], [4.0, 4.0, 4.0], [2.0, 3.0, 2.0]], "relevant_clip_ids": [1, 2, 3, 4], "source": "synthetic"}
