@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "model": {
+    "id": "moment-detr-clip-baseline",
+    "display_name": "Moment-DETR CLIP-only",
+    "base_model": "Moment-DETR",
+    "stage": "baseline",
+    "temporal_resolution_seconds": 2,
+    "max_video_duration_seconds": 150,
+    "status": "research_demo"
+  },
+  "benchmark": {
+    "dataset": "QVHighlights",
+    "MR_R1_0_5": 53.23,
+    "MR_R1_0_7": 34.00,
+    "MR_mAP": 30.58,
+    "MR_mAP_0_5": 54.80,
+    "MR_mAP_0_75": 29.02,
+    "MR_short_mAP": 3.11,
+    "MR_middle_mAP": 29.42,
+    "MR_long_mAP": 41.27,
+    "HL_VeryGood_mAP": 35.51,
+    "HL_VeryGood_HIT1": 55.87
+  }
+}
