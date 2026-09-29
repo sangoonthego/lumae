@@ -16,7 +16,7 @@
 /.pytest_cache/
 __pycache__/
 *.pyc
-
+docs/research
 # next.js
 /.next/
 /out/
@@ -44,3 +44,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# research and local data artifacts
+/local_data/
+*.npz
+*.ckpt
+*.pth
+*.pt
