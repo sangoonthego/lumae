@@ -1,0 +1,38 @@
+{
+  "version": "1.0",
+  "project": "LUMAE",
+  "updated_at_utc": "2026-09-29T16:22:00Z",
+  "experiments": [
+    {
+      "id": "M0_baseline",
+      "display_name": "Moment-DETR CLIP-only Baseline",
+      "model_type": "Moment-DETR",
+      "features": "CLIP ViT-B/32 (2s temporal resolution)",
+      "parent_experiment": null,
+      "training_dataset": "QVHighlights (Pretrained)",
+      "evaluation_datasets": [
+        "QVHighlights val",
+        "Lumae Product-Ads test"
+      ],
+      "status": "PRETRAINED_BASELINE",
+      "config_path": "experiments/M0_baseline/config.json",
+      "notes": "Official upstream Moment-DETR checkpoint evaluated without fine-tuning."
+    },
+    {
+      "id": "M1_lumae_ads",
+      "display_name": "Lumae Ads Fine-Tuned Moment-DETR",
+      "model_type": "Moment-DETR",
+      "features": "CLIP ViT-B/32 (2s temporal resolution)",
+      "parent_experiment": "M0_baseline",
+      "training_dataset": "local_data/canonical/lumae_ads/train.jsonl",
+      "validation_dataset": "local_data/canonical/lumae_ads/val.jsonl",
+      "evaluation_datasets": [
+        "Lumae Product-Ads test",
+        "QVHighlights val"
+      ],
+      "status": "NOT_TRAINED",
+      "config_path": "experiments/M1_lumae_ads/config.json",
+      "notes": "Domain-adaptation fine-tuning on short-form product video advertisements."
+    }
+  ]
+}

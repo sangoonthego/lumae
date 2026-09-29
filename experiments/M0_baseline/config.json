@@ -1,0 +1,25 @@
+{
+  "experiment_id": "M0_baseline",
+  "model": {
+    "name": "Moment-DETR",
+    "feature_extractor": "CLIP-ViT-B/32",
+    "temporal_resolution_seconds": 2.0,
+    "max_duration_seconds": 150.0,
+    "checkpoint_source": "official_jayleicn_moment_detr"
+  },
+  "evaluation": {
+    "datasets": [
+      {
+        "name": "QVHighlights_val",
+        "split_path": "local_data/canonical/qvhighlights/val.jsonl",
+        "metrics": ["R1@0.5", "R1@0.7", "MR_mAP", "HL_mAP", "HIT@1"]
+      },
+      {
+        "name": "Lumae_Ads_test",
+        "split_path": "local_data/canonical/lumae_ads/test.jsonl",
+        "metrics": ["R1@0.5", "R1@0.7", "MR_mAP", "mIoU"]
+      }
+    ]
+  },
+  "training": null
+}

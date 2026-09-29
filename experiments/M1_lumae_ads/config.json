@@ -1,0 +1,42 @@
+{
+  "experiment_id": "M1_lumae_ads",
+  "parent_id": "M0_baseline",
+  "model": {
+    "name": "Moment-DETR",
+    "feature_extractor": "CLIP-ViT-B/32",
+    "temporal_resolution_seconds": 2.0,
+    "max_duration_seconds": 150.0
+  },
+  "training": {
+    "dataset_path": "local_data/canonical/lumae_ads/train.jsonl",
+    "batch_size": 16,
+    "learning_rate": 0.0001,
+    "max_epochs": 50,
+    "early_stopping_patience": 10,
+    "optimizer": "AdamW",
+    "weight_decay": 0.0001,
+    "loss_weights": {
+      "span_loss": 5.0,
+      "giou_loss": 2.0
+    }
+  },
+  "validation": {
+    "dataset_path": "local_data/canonical/lumae_ads/val.jsonl",
+    "frequency_epochs": 1
+  },
+  "evaluation": {
+    "datasets": [
+      {
+        "name": "Lumae_Ads_test",
+        "split_path": "local_data/canonical/lumae_ads/test.jsonl",
+        "metrics": ["R1@0.5", "R1@0.7", "MR_mAP", "mIoU"]
+      },
+      {
+        "name": "QVHighlights_val",
+        "split_path": "local_data/canonical/qvhighlights/val.jsonl",
+        "metrics": ["R1@0.5", "R1@0.7", "MR_mAP"]
+      }
+    ]
+  },
+  "status": "NOT_TRAINED"
+}
