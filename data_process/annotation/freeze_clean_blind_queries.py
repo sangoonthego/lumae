@@ -91,26 +91,38 @@ def check_and_freeze_clean_blind_queries() -> Dict[str, Any]:
     frozen_fields = [
         "sample_id",
         "video_filename",
+        "source_dataset",
+        "source_video_id",
         "original_query",
         "human_final_query",
         "original_query_quality",
         "query_review_status",
+        "query_change_type",
+        "query_localizable",
+        "query_observable",
         "reviewer_id",
         "review_notes",
+        "query_version",
     ]
 
     rows = []
-    for sid in target_sample_ids:
+    for sid in sorted(target_sample_ids):
         r = reviews[sid]
         rows.append({
             "sample_id": r.sample_id,
             "video_filename": r.video_filename,
+            "source_dataset": r.source_dataset,
+            "source_video_id": r.source_video_id,
             "original_query": r.original_query,
             "human_final_query": r.human_final_query,
             "original_query_quality": r.original_query_quality,
             "query_review_status": r.query_review_status,
+            "query_change_type": r.query_change_type,
+            "query_localizable": "TRUE" if r.query_localizable is True or str(r.query_localizable).upper() == "TRUE" else "FALSE",
+            "query_observable": "TRUE" if r.query_observable is True or str(r.query_observable).upper() == "TRUE" else "FALSE",
             "reviewer_id": r.reviewer_id,
             "review_notes": r.review_notes,
+            "query_version": r.query_version,
         })
 
     with open(frozen_csv_path, "w", encoding="utf-8", newline="") as f:
@@ -120,14 +132,18 @@ def check_and_freeze_clean_blind_queries() -> Dict[str, Any]:
 
     frozen_bytes = frozen_csv_path.read_bytes()
     query_sha256 = hashlib.sha256(frozen_bytes).hexdigest()
+    sel_sha256 = hashlib.sha256(sel_path.read_bytes()).hexdigest()
+    reviewers = sorted(list({r["reviewer_id"] for r in rows if r["reviewer_id"]}))
 
     freeze_manifest = {
         "experiment": "semantic_v3_clean_query_blind5",
-        "sample_ids": target_sample_ids,
+        "sample_ids": sorted(target_sample_ids),
         "query_file": "local_data/annotations/lumae_ads/blind_eval/semantic_v3_clean_query_blind5_queries_frozen.csv",
         "query_file_sha256": query_sha256,
         "source_query_reviews_sha256": qr_sha256,
+        "selection_manifest_sha256": sel_sha256,
         "freeze_timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "reviewer_count": len(reviewers),
         "status": "CLEAN_BLIND_QUERIES_FROZEN_BEFORE_V3_INFERENCE",
     }
 

@@ -174,7 +174,8 @@ def test_source_data_mutation_check():
     ai_preann = REPO_ROOT / "local_data" / "annotations" / "lumae_ads" / "ai_preannotations.csv"
     holdout = REPO_ROOT / "local_data" / "annotations" / "lumae_ads" / "blind_holdout.json"
 
-    assert _sha256(human_primary) in {BASELINE_HUMAN_PRIMARY_SHA256, STAGE_A25H_HUMAN_PRIMARY_SHA256}, "human_primary.csv was mutated!"
+    a25k_freeze = json.loads((REPO_ROOT / "local_data/manifests/semantic_v3_clean_query_blind5_human_gt_freeze.json").read_text())
+    assert _sha256(human_primary) == a25k_freeze["source_human_primary_sha256"], "human_primary.csv differs from A.2.5K human freeze!"
     assert _sha256(ai_preann) == BASELINE_AI_PREANNOTATIONS_SHA256, "ai_preannotations.csv was mutated!"
     assert _sha256(holdout) == BASELINE_BLIND_HOLDOUT_SHA256, "blind_holdout.json was mutated!"
 

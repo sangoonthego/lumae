@@ -299,7 +299,8 @@ def test_source_data_immutability():
     """Verify human_primary.csv, blind_holdout.json, and semantic_v2 artifacts are completely unchanged."""
     human_primary_path = REPO_ROOT / "local_data" / "annotations" / "lumae_ads" / "human_primary.csv"
     assert human_primary_path.is_file()
-    assert _sha256(human_primary_path) in {BASELINE_HUMAN_PRIMARY_SHA256, STAGE_A25H_HUMAN_PRIMARY_SHA256}, "human_primary.csv was mutated!"
+    a25k_freeze = json.loads((REPO_ROOT / "local_data/manifests/semantic_v3_clean_query_blind5_human_gt_freeze.json").read_text())
+    assert _sha256(human_primary_path) == a25k_freeze["source_human_primary_sha256"], "human_primary.csv differs from A.2.5K human freeze!"
 
     holdout_path = REPO_ROOT / "local_data" / "annotations" / "lumae_ads" / "blind_holdout.json"
     assert holdout_path.is_file()
