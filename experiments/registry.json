@@ -24,15 +24,15 @@
       "model_type": "Moment-DETR",
       "features": "CLIP ViT-B/32 (2s temporal resolution)",
       "parent_experiment": "M0_baseline",
-      "training_dataset": "local_data/canonical/lumae_ads/train.jsonl",
-      "validation_dataset": "local_data/canonical/lumae_ads/val.jsonl",
+      "training_dataset": "local_data/datasets/lumae_ads_v1/lumae_ads_v1_train.jsonl",
+      "validation_dataset": "local_data/datasets/lumae_ads_v1/lumae_ads_v1_val.jsonl",
       "evaluation_datasets": [
         "Lumae Product-Ads test",
         "QVHighlights val"
       ],
-      "status": "NOT_TRAINED",
+      "status": "READY_FOR_GPU_RUN",
       "config_path": "experiments/M1_lumae_ads/config.json",
-      "notes": "Domain-adaptation fine-tuning on short-form product video advertisements."
+      "notes": "Frozen v1 has 18 human verified and 30 AI pseudo labels; validation and test are pseudo labeled only. No M1 checkpoint has been trained yet."
     }
   ]
 }
