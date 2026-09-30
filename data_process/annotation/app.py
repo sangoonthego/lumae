@@ -10,6 +10,7 @@ Stage A.2.5B Protocol:
 
 from __future__ import annotations
 
+import csv
 from datetime import datetime, timezone
 from pathlib import Path
 import sys
@@ -71,7 +72,12 @@ st.set_page_config(
 def initialize_session_state() -> None:
     """Initialize session state parameters."""
     if "mode" not in st.session_state:
-        st.session_state["mode"] = AnnotationMode.AI_ASSISTED_PRIMARY.value
+        requested_mode = st.query_params.get("mode", "")
+        st.session_state["mode"] = (
+            AnnotationMode.QUERY_SANITATION.value
+            if requested_mode == AnnotationMode.QUERY_SANITATION.value
+            else AnnotationMode.AI_ASSISTED_PRIMARY.value
+        )
     if "filter_status" not in st.session_state:
         st.session_state["filter_status"] = "ALL"
     if "current_index" not in st.session_state:
@@ -125,6 +131,26 @@ CLEAN_QUERY_BLIND5_SAMPLES: set[str] = {
 }
 
 
+def load_clean_blind_frozen_queries() -> dict[str, str]:
+    """Load verified frozen queries for clean-blind 5 samples."""
+    frozen_csv = (
+        REPO_ROOT
+        / "local_data"
+        / "annotations"
+        / "lumae_ads"
+        / "blind_eval"
+        / "semantic_v3_clean_query_blind5_queries_frozen.csv"
+    )
+    if not frozen_csv.is_file():
+        return {}
+    mapping = {}
+    with frozen_csv.open("r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        for r in reader:
+            mapping[r["sample_id"]] = r["human_final_query"]
+    return mapping
+
+
 def main() -> None:
     initialize_session_state()
 
@@ -141,6 +167,8 @@ def main() -> None:
             AnnotationMode.BLIND_PRIMARY.value,
             AnnotationMode.QUERY_SANITATION.value,
             AnnotationMode.BLIND_QUERY_REVIEW.value,
+            AnnotationMode.CLEAN_QUERY_BLIND_TEMPORAL.value,
+            AnnotationMode.ASSISTED_TEMPORAL_REVIEW.value,
             AnnotationMode.SECONDARY.value,
             AnnotationMode.ADJUDICATION.value,
         ]
@@ -178,6 +206,16 @@ def main() -> None:
         ):
             records = load_primary_records()
             annotator_label = "human_01 (Lead Reviewer)"
+        elif mode == AnnotationMode.CLEAN_QUERY_BLIND_TEMPORAL.value:
+            records = [r for r in load_primary_records() if r.sample_id in CLEAN_QUERY_BLIND5_SAMPLES]
+            records.sort(key=lambda r: r.sample_id)
+            annotator_label = "human_01 (Clean Blind Temporal Reviewer)"
+        elif mode == AnnotationMode.ASSISTED_TEMPORAL_REVIEW.value:
+            from data_process.annotation.assisted_deployment import load_state
+            deployment_state = load_state()
+            records = [r for r in load_primary_records() if r.sample_id in deployment_state["eligible"]]
+            records.sort(key=lambda r: r.sample_id)
+            annotator_label = "human_01 (Assisted Temporal Reviewer)"
         elif mode == AnnotationMode.SECONDARY.value:
             records = load_secondary_records()
             annotator_label = "human_02 (Secondary Independent Reviewer)"
@@ -194,11 +232,20 @@ def main() -> None:
         reviewed_count = sum(1 for r in records if r.is_human_reviewed())
         excluded_count = sum(1 for r in records if r.is_excluded())
         unreviewed_count = total_count - (reviewed_count + excluded_count)
-        progress_pct = (reviewed_count + excluded_count) / total_count * 100 if total_count > 0 else 0.0
+        if mode == AnnotationMode.QUERY_SANITATION.value:
+            from data_process.annotation.fastlane import progress, recover_incomplete_commits
+            recover_incomplete_commits(REPO_ROOT)
+            query_state = progress(REPO_ROOT)
+            total_count = query_state["fastlane_total"]
+            reviewed_count = query_state["temporal_reviewed"]
+            excluded_count = query_state["excluded"]
+            unreviewed_count = query_state["remaining"]
+        completed_count = reviewed_count + excluded_count
+        progress_pct = completed_count / total_count * 100 if total_count > 0 else 0.0
 
         st.markdown("---")
         st.subheader("📊 Progress Dashboard")
-        st.metric("Total Pilot Samples", total_count)
+        st.metric("Query Worklist Samples" if mode == AnnotationMode.QUERY_SANITATION.value else "Total Pilot Samples", total_count)
         col_m1, col_m2 = st.columns(2)
         col_m1.metric("Reviewed", reviewed_count)
         col_m2.metric("Excluded", excluded_count)
@@ -213,7 +260,7 @@ def main() -> None:
 
         st.markdown("---")
         st.subheader("🔍 Filter Worklist")
-        filter_opt = st.selectbox(
+        filter_opt = "ALL" if mode == AnnotationMode.QUERY_SANITATION.value else st.selectbox(
             "Filter by Status:",
             ["ALL", "UNREVIEWED", "REVIEWED", "EXCLUDED"],
             index=["ALL", "UNREVIEWED", "REVIEWED", "EXCLUDED"].index(st.session_state["filter_status"]),
@@ -239,6 +286,12 @@ def main() -> None:
             st.error("No annotation records found. Check local_data/annotations/lumae_ads/.")
         return
 
+    if mode == AnnotationMode.QUERY_SANITATION.value:
+        from data_process.annotation.fastlane_ui import render_fastlane
+
+        render_fastlane(records, REPO_ROOT)
+        return
+
     # Apply filter
     filtered_records: list[tuple[int, AnnotationRecord]] = []
     for idx, r in enumerate(records):
@@ -261,17 +314,24 @@ def main() -> None:
     curr_list_idx = st.session_state["current_index"]
     orig_idx, current_record = filtered_records[curr_list_idx]
 
-    # Check Blind Holdout, Clean Blind, and Clean Query Blind Condition (Stage A.2.5E/G/I)
+    if mode == AnnotationMode.ASSISTED_TEMPORAL_REVIEW.value:
+        from data_process.annotation.assisted_ui import render_assisted_temporal_review
+        render_assisted_temporal_review(current_record, curr_list_idx, len(filtered_records))
+        return
+
+    # Check Blind Holdout, Clean Blind, and Clean Query Blind Condition (Stage A.2.5E/G/I/J)
     is_clean_blind = current_record.sample_id in CLEAN_BLIND_SAMPLES
     is_clean_query_blind = current_record.sample_id in CLEAN_QUERY_BLIND5_SAMPLES
-    is_query_sanitation_mode = (
-        is_clean_query_blind
-        or mode in (AnnotationMode.QUERY_SANITATION.value, AnnotationMode.BLIND_QUERY_REVIEW.value)
+    is_query_sanitation_mode = mode in (
+        AnnotationMode.QUERY_SANITATION.value,
+        AnnotationMode.BLIND_QUERY_REVIEW.value,
     )
+    is_clean_query_blind_temporal = mode == AnnotationMode.CLEAN_QUERY_BLIND_TEMPORAL.value
     is_holdout = is_blind_holdout(current_record.sample_id) or is_clean_blind or is_clean_query_blind
     is_reviewed = current_record.is_human_reviewed()
     is_blind_mode = (
         is_query_sanitation_mode
+        or is_clean_query_blind_temporal
         or (is_clean_blind and not is_reviewed)
         or (mode == AnnotationMode.BLIND_PRIMARY.value and not is_reviewed)
         or (mode == AnnotationMode.AI_ASSISTED_PRIMARY.value and is_holdout and not is_reviewed)
@@ -324,6 +384,86 @@ def main() -> None:
                 st.info("No secondary review completed for this sample yet.")
 
     with col_form:
+        if is_clean_query_blind_temporal:
+            st.subheader("⏱️ Clean-Blind Temporal Review")
+            st.warning(
+                "🔒 **Stage A.2.5J Protocol • Clean-Blind Temporal Ground-Truth Review** — "
+                "Human blind temporal annotation using verified queries only. "
+                "AI candidate predictions, confidence values, ranking margins, and intervals "
+                "are strictly suppressed from the interface and DOM."
+            )
+            frozen_queries = load_clean_blind_frozen_queries()
+            display_query = frozen_queries.get(current_record.sample_id, current_record.query)
+
+            st.markdown("**Frozen Human-Verified Query:**")
+            st.markdown(f"> *{display_query}*")
+
+            st.markdown("---")
+            st.markdown("#### ⏱️ Temporal Ground-Truth Boundary (Seconds)")
+            st.caption("Continuous 0.1s precision. Rule: earliest visual start to conclusion.")
+
+            c_t1, c_t2 = st.columns(2)
+            with c_t1:
+                start_val = st.number_input(
+                    "START (seconds):",
+                    min_value=0.0,
+                    max_value=max(0.0, current_record.duration_seconds),
+                    value=None,
+                    step=0.1,
+                    format="%.1f",
+                    key=f"clean_blind_start_{current_record.sample_id}",
+                )
+            with c_t2:
+                end_val = st.number_input(
+                    "END (seconds):",
+                    min_value=0.0,
+                    max_value=max(0.0, current_record.duration_seconds),
+                    value=None,
+                    step=0.1,
+                    format="%.1f",
+                    key=f"clean_blind_end_{current_record.sample_id}",
+                )
+
+            notes_input = st.text_area(
+                "Annotation Notes:",
+                value="",
+                help="Note visual cues or boundary rationale.",
+                key=f"notes_clean_blind_{current_record.sample_id}",
+            )
+
+            st.markdown("---")
+            if st.button("Save Human Temporal Review", type="primary", use_container_width=True, key=f"btn_save_clean_blind_temporal_{current_record.sample_id}"):
+                final_windows = [[round(start_val, 1), round(end_val, 1)]] if start_val is not None and end_val is not None else []
+                success = handle_save(
+                    record=current_record,
+                    records=records,
+                    query_status=QueryStatus.VALID.value,
+                    final_query=display_query,
+                    windows=final_windows,
+                    notes=notes_input,
+                    mode=mode,
+                    is_blind_holdout_sample=True,
+                    query_action=None,
+                    window_action=None,
+                    ai_candidate=None,
+                    advance=True,
+                )
+                if success:
+                    st.rerun()
+
+            # Navigation buttons
+            st.markdown("---")
+            c_prev, c_next = st.columns(2)
+            with c_prev:
+                if st.button("⬅️ Previous Sample", key=f"btn_prev_{current_record.sample_id}", use_container_width=True, disabled=(curr_list_idx == 0)):
+                    st.session_state["current_index"] = max(0, curr_list_idx - 1)
+                    st.rerun()
+            with c_next:
+                if st.button("Next Sample ➡️", key=f"btn_next_{current_record.sample_id}", use_container_width=True, disabled=(curr_list_idx >= len(filtered_records) - 1)):
+                    st.session_state["current_index"] = min(len(filtered_records) - 1, curr_list_idx + 1)
+                    st.rerun()
+            return
+
         if is_query_sanitation_mode:
             st.subheader("🔍 Query Sanitation & Verification")
             if is_clean_query_blind:
@@ -338,77 +478,147 @@ def main() -> None:
                     "Temporal boundary annotations are locked until query is verified."
                 )
 
+            from data_process.annotation.query_sanitation import (
+                load_query_reviews,
+                save_query_review,
+            )
+
+            existing_reviews = load_query_reviews()
+            existing_q_rec = existing_reviews.get(current_record.sample_id)
+
+            orig_query_val = current_record.original_query or current_record.query
             st.markdown("**Original Lumae-Generated Draft Query:**")
-            st.markdown(f"> *{current_record.original_query or current_record.query}*")
+            st.markdown(f"> *{orig_query_val}*")
+
+            suggestion = None
+            if mode == AnnotationMode.QUERY_SANITATION.value:
+                from data_process.annotation.assisted_deployment import _paths, _read_csv
+                suggestion_path = _paths(REPO_ROOT)[0] / "ai_query_suggestions.csv"
+                suggestion = next((r for r in _read_csv(suggestion_path)
+                                   if r["sample_id"] == current_record.sample_id), None)
+                if suggestion:
+                    st.markdown("**AI query suggestion (advisory):**")
+                    st.info(suggestion["ai_suggested_query"])
+                    st.caption(f"Video evidence: {suggestion['observable_evidence']}")
+
+            qual_options = [
+                OriginalQueryQuality.VAGUE_BUT_RELEVANT.value,
+                OriginalQueryQuality.VALID.value,
+                OriginalQueryQuality.INCORRECT_FOR_VIDEO.value,
+                OriginalQueryQuality.INVALID_OR_UNLOCALIZABLE.value,
+            ]
+            default_qual_idx = 0
+            if existing_q_rec and existing_q_rec.original_query_quality in qual_options:
+                default_qual_idx = qual_options.index(existing_q_rec.original_query_quality)
+            elif suggestion and suggestion["query_quality_suggestion"] in qual_options:
+                default_qual_idx = qual_options.index(suggestion["query_quality_suggestion"])
 
             q_qual_choice = st.radio(
                 "Original Query Quality:",
-                [
-                    OriginalQueryQuality.VAGUE_BUT_RELEVANT.value,
-                    OriginalQueryQuality.VALID.value,
-                    OriginalQueryQuality.INCORRECT_FOR_VIDEO.value,
-                    OriginalQueryQuality.INVALID_OR_UNLOCALIZABLE.value,
-                ],
-                index=0,
+                qual_options,
+                index=default_qual_idx,
                 key=f"q_qual_{current_record.sample_id}",
                 help="Classify suitability of initial Lumae draft query template for the video.",
             )
 
-            q_default = st.session_state.get(f"q_input_{current_record.sample_id}", current_record.query)
+            q_default = existing_q_rec.human_final_query if (existing_q_rec and existing_q_rec.human_final_query) else (suggestion["ai_suggested_query"] if suggestion else current_record.query)
+            q_input_val = st.session_state.get(f"q_input_{current_record.sample_id}", q_default)
             final_query = st.text_area(
                 "Final Human Query (Action-Conditioned & Observable):",
-                value=q_default,
+                value=q_input_val,
                 help="Visible, observable, temporally localizable natural language query.",
                 key=f"final_query_san_{current_record.sample_id}",
             )
 
+            change_options = [
+                "UNCHANGED",
+                "NARROWED_INTENT",
+                "REWRITTEN",
+                "CORRECTED_ACTION",
+                "SPECIFIED_OBJECT",
+            ]
+            default_change_idx = 0
+            if existing_q_rec and existing_q_rec.query_change_type in change_options:
+                default_change_idx = change_options.index(existing_q_rec.query_change_type)
+            elif final_query.strip() != orig_query_val.strip():
+                default_change_idx = 2  # REWRITTEN
+
+            q_change_choice = st.selectbox(
+                "Query Change Type:",
+                change_options,
+                index=default_change_idx,
+                key=f"q_change_{current_record.sample_id}",
+                help="Provenance category describing how the original draft was revised.",
+            )
+
+            default_localizable = existing_q_rec.query_localizable is True if existing_q_rec else False
             is_localizable = st.checkbox(
                 "Event is temporally localizable in video",
-                value=True,
+                value=default_localizable,
                 key=f"chk_localizable_{current_record.sample_id}",
             )
 
+            is_observable = st.checkbox(
+                "Event is visually observable in video",
+                value=existing_q_rec.query_observable is True if existing_q_rec else False,
+                key=f"chk_observable_{current_record.sample_id}",
+            )
+
+            human_reviewer = st.text_input(
+                "Human reviewer ID:", value=existing_q_rec.reviewer_id if existing_q_rec and existing_q_rec.reviewer_id else "human_01",
+                key=f"query_reviewer_{current_record.sample_id}",
+            )
+
+            default_notes = existing_q_rec.review_notes if (existing_q_rec and existing_q_rec.review_notes) else current_record.annotation_notes
             notes_input = st.text_area(
                 "Query Review Notes:",
-                value=current_record.annotation_notes,
+                value=default_notes,
                 help="Note rationale for query classification or rewrite.",
                 key=f"notes_san_{current_record.sample_id}",
             )
 
             if st.button("💾 Save Query Review", type="primary", use_container_width=True, key=f"btn_save_query_{current_record.sample_id}"):
-                from data_process.annotation.query_sanitation import save_query_review
                 from datetime import datetime, timezone
                 import time
 
-                q_status = (
-                    QueryReviewStatus.VALID_AS_IS.value
-                    if final_query.strip() == current_record.query.strip() and q_qual_choice == OriginalQueryQuality.VALID.value
-                    else QueryReviewStatus.HUMAN_EDITED.value
-                )
-                if q_qual_choice == OriginalQueryQuality.INVALID_OR_UNLOCALIZABLE.value:
+                if final_query.strip() == orig_query_val.strip() and q_qual_choice == OriginalQueryQuality.VALID.value:
+                    q_status = QueryReviewStatus.VALID_AS_IS.value
+                    final_change_type = "UNCHANGED"
+                elif q_qual_choice == OriginalQueryQuality.INVALID_OR_UNLOCALIZABLE.value:
                     q_status = QueryReviewStatus.EXCLUDE.value
+                    final_change_type = q_change_choice if q_change_choice != "UNCHANGED" else "EXCLUDED"
+                else:
+                    q_status = QueryReviewStatus.HUMAN_EDITED.value
+                    final_change_type = q_change_choice if q_change_choice != "UNCHANGED" else "REWRITTEN"
+
+                if not human_reviewer.startswith("human_"):
+                    st.error("A human_ reviewer ID is required.")
+                    return
+                if q_status != QueryReviewStatus.EXCLUDE.value and (not final_query.strip() or not is_localizable or not is_observable):
+                    st.error("Approve only a nonempty, localizable, observable query.")
+                    return
 
                 q_rec = QueryReviewRecord(
                     sample_id=current_record.sample_id,
                     video_filename=current_record.video_filename,
                     source_dataset=current_record.source_dataset,
                     source_video_id=current_record.source_video_id,
-                    original_query=current_record.original_query or current_record.query,
+                    original_query=orig_query_val,
+                    ai_suggested_query=suggestion["ai_suggested_query"] if suggestion else "",
                     human_final_query=final_query.strip(),
                     query_review_status=q_status,
                     original_query_quality=q_qual_choice,
-                    query_change_type="UNCHANGED" if final_query.strip() == current_record.query.strip() else "REWRITTEN",
+                    query_change_type=final_change_type,
                     query_localizable=is_localizable,
-                    query_observable=True,
-                    reviewer_id=annotator_label.split()[0] if annotator_label else "human_01",
+                    query_observable=is_observable,
+                    reviewer_id=human_reviewer.strip(),
                     review_notes=notes_input.strip(),
                     reviewed_at_utc=datetime.now(timezone.utc).isoformat(),
-                    query_version="lumae_query_v1",
+                    query_version="1",
                     temporal_annotation_locked=True,
                 )
                 save_query_review(q_rec)
-                current_record.query = final_query.strip()
-                st.success("✅ Query review saved successfully!")
+                st.success("✅ Query review saved successfully to query_reviews.csv!")
                 time.sleep(0.4)
                 st.rerun()
 

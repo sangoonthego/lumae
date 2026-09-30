@@ -249,7 +249,7 @@ def test_playwright_streamlit_ai_assisted_and_blind_privacy(isolated_annotation_
 
             # Click Save button
             save_btn = page.locator("button:has-text('SAVE HUMAN VERIFIED'), button:has-text('SAVE & NEXT')")
-            assert save_btn.count() > 0
+            save_btn.first.wait_for(state="visible", timeout=20000)
             save_btn.first.click()
             time.sleep(2.0)
 
