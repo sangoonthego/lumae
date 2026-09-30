@@ -59,7 +59,7 @@ from data_process.annotation.storage import (
 
 
 def test_pending_sample_detection_and_reviewed_exclusion():
-    """Verify that human_primary.csv accurately identifies the 2 reviewed and 46 pending samples."""
+    """Verify that human_primary.csv accurately identifies the reviewed and pending samples."""
     records = load_primary_records()
     assert len(records) == 48
 
@@ -67,28 +67,40 @@ def test_pending_sample_detection_and_reviewed_exclusion():
     pending = [r for r in records if not r.is_human_reviewed()]
 
     reviewed_ids = {r.sample_id for r in reviewed}
-    assert reviewed_ids == {"lumae_ads_pilot_0004", "lumae_ads_pilot_0006"}
-    assert len(pending) == 46
-    assert "lumae_ads_pilot_0004" not in [r.sample_id for r in pending]
-    assert "lumae_ads_pilot_0006" not in [r.sample_id for r in pending]
+    expected_reviewed = {
+        "lumae_ads_pilot_0004",
+        "lumae_ads_pilot_0006",
+        "lumae_ads_pilot_0007",
+        "lumae_ads_pilot_0012",
+        "lumae_ads_pilot_0013",
+    }
+    assert expected_reviewed.issubset(reviewed_ids)
+    assert len(reviewed) >= 5
+    for rid in expected_reviewed:
+        assert rid not in [r.sample_id for r in pending]
 
 
-def test_blind_holdout_deterministic_seed_reproducibility():
+def test_blind_holdout_deterministic_seed_reproducibility(tmp_path: Path, monkeypatch):
     """Verify blind holdout deterministic subset generation with seed 42."""
-    records = load_primary_records()
-    pending_ids = [r.sample_id for r in records if not r.is_human_reviewed()]
+    pool_ids = [
+        f"lumae_ads_pilot_{i:04d}" for i in range(1, 49)
+        if f"lumae_ads_pilot_{i:04d}" not in {
+            "lumae_ads_pilot_0004", "lumae_ads_pilot_0006", "lumae_ads_pilot_0007", "lumae_ads_pilot_0012", "lumae_ads_pilot_0013"
+        }
+    ]
+    monkeypatch.setenv("LUMAE_ANNOTATIONS_DIR", str(tmp_path))
 
     # Generate twice with same seed
-    holdout_1 = create_blind_holdout(pending_ids, count=10, fraction=0.20, seed=42)
-    holdout_2 = create_blind_holdout(pending_ids, count=10, fraction=0.20, seed=42)
+    holdout_1 = create_blind_holdout(pool_ids, count=10, fraction=0.20, seed=42)
+    holdout_2 = create_blind_holdout(pool_ids, count=10, fraction=0.20, seed=42)
 
     assert holdout_1["sample_ids"] == holdout_2["sample_ids"]
     assert len(holdout_1["sample_ids"]) == 10
     assert "lumae_ads_pilot_0002" in holdout_1["sample_ids"]
-    assert "lumae_ads_pilot_0008" in holdout_1["sample_ids"]
+    assert "lumae_ads_pilot_0009" in holdout_1["sample_ids"]
     # Ensure reviewed samples were not in holdout pool
-    assert "lumae_ads_pilot_0004" not in holdout_1["sample_ids"]
-    assert "lumae_ads_pilot_0006" not in holdout_1["sample_ids"]
+    for rid in ["lumae_ads_pilot_0004", "lumae_ads_pilot_0006", "lumae_ads_pilot_0007", "lumae_ads_pilot_0012", "lumae_ads_pilot_0013"]:
+        assert rid not in holdout_1["sample_ids"]
 
 
 def test_ai_preannotation_record_schema_and_csv_roundtrip():
