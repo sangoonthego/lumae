@@ -32,6 +32,28 @@ class AnnotationMode(str, Enum):
     BLIND_PRIMARY = "BLIND_PRIMARY"
     SECONDARY = "SECONDARY"
     ADJUDICATION = "ADJUDICATION"
+    QUERY_SANITATION = "QUERY_SANITATION"
+    BLIND_QUERY_REVIEW = "BLIND_QUERY_REVIEW"
+
+
+class QueryReviewStatus(str, Enum):
+    """Review progress status of temporal query sanitation."""
+
+    PENDING_QUERY_REVIEW = "PENDING_QUERY_REVIEW"
+    VALID_AS_IS = "VALID_AS_IS"
+    HUMAN_EDITED = "HUMAN_EDITED"
+    INVALID_VIDEO = "INVALID_VIDEO"
+    EXCLUDE = "EXCLUDE"
+
+
+class OriginalQueryQuality(str, Enum):
+    """Classification of Lumae-generated draft temporal query quality."""
+
+    VALID = "VALID"
+    VAGUE_BUT_RELEVANT = "VAGUE_BUT_RELEVANT"
+    INCORRECT_FOR_VIDEO = "INCORRECT_FOR_VIDEO"
+    INVALID_OR_UNLOCALIZABLE = "INVALID_OR_UNLOCALIZABLE"
+
 
 
 class AIQueryStatus(str, Enum):
@@ -270,3 +292,75 @@ class ReviewLogEntry:
         d = asdict(self)
         # Filter None values to keep logs clean
         return {k: v for k, v in d.items() if v is not None}
+
+
+@dataclass
+class QueryReviewRecord:
+    """Record tracking human verification and provenance of a temporal query."""
+
+    sample_id: str
+    video_filename: str
+    source_dataset: str = "AdsQA"
+    source_video_id: str = ""
+    original_query: str = ""
+    ai_suggested_query: str = ""
+    human_final_query: str = ""
+    query_review_status: str = QueryReviewStatus.PENDING_QUERY_REVIEW.value
+    original_query_quality: str = OriginalQueryQuality.VAGUE_BUT_RELEVANT.value
+    query_change_type: str = "UNCHANGED"
+    query_localizable: bool = True
+    query_observable: bool = True
+    reviewer_id: str = ""
+    review_notes: str = ""
+    reviewed_at_utc: str = ""
+    query_version: str = "lumae_query_v1"
+    temporal_annotation_locked: bool = True
+
+    def to_csv_dict(self) -> dict[str, str]:
+        return {
+            "sample_id": self.sample_id,
+            "video_filename": self.video_filename,
+            "source_dataset": self.source_dataset,
+            "source_video_id": self.source_video_id,
+            "original_query": self.original_query,
+            "ai_suggested_query": self.ai_suggested_query,
+            "human_final_query": self.human_final_query,
+            "query_review_status": self.query_review_status,
+            "original_query_quality": self.original_query_quality,
+            "query_change_type": self.query_change_type,
+            "query_localizable": str(self.query_localizable),
+            "query_observable": str(self.query_observable),
+            "reviewer_id": self.reviewer_id,
+            "review_notes": self.review_notes,
+            "reviewed_at_utc": self.reviewed_at_utc,
+            "query_version": self.query_version,
+            "temporal_annotation_locked": str(self.temporal_annotation_locked),
+        }
+
+    @classmethod
+    def from_csv_dict(cls, row: dict[str, str]) -> QueryReviewRecord:
+        def _parse_bool(val: Any) -> bool:
+            if isinstance(val, bool):
+                return val
+            return str(val).strip().lower() in ("true", "1", "yes")
+
+        return cls(
+            sample_id=row["sample_id"].strip(),
+            video_filename=row.get("video_filename", "").strip(),
+            source_dataset=row.get("source_dataset", "AdsQA").strip(),
+            source_video_id=row.get("source_video_id", "").strip(),
+            original_query=row.get("original_query", "").strip(),
+            ai_suggested_query=row.get("ai_suggested_query", "").strip(),
+            human_final_query=row.get("human_final_query", "").strip(),
+            query_review_status=row.get("query_review_status", QueryReviewStatus.PENDING_QUERY_REVIEW.value).strip(),
+            original_query_quality=row.get("original_query_quality", OriginalQueryQuality.VAGUE_BUT_RELEVANT.value).strip(),
+            query_change_type=row.get("query_change_type", "UNCHANGED").strip(),
+            query_localizable=_parse_bool(row.get("query_localizable", True)),
+            query_observable=_parse_bool(row.get("query_observable", True)),
+            reviewer_id=row.get("reviewer_id", "").strip(),
+            review_notes=row.get("review_notes", "").strip(),
+            reviewed_at_utc=row.get("reviewed_at_utc", "").strip(),
+            query_version=row.get("query_version", "lumae_query_v1").strip(),
+            temporal_annotation_locked=_parse_bool(row.get("temporal_annotation_locked", True)),
+        )
+

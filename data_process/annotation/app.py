@@ -27,7 +27,10 @@ from data_process.annotation.models import (
     AIQueryStatus,
     AnnotationMode,
     AnnotationRecord,
+    OriginalQueryQuality,
     QueryAction,
+    QueryReviewRecord,
+    QueryReviewStatus,
     QueryStatus,
     ReviewLogEntry,
     ReviewStatus,
@@ -102,11 +105,31 @@ def get_ai_priority_key(sample_id: str, ai_map: dict[str, AIPreannotationRecord]
     return (6, sample_id)
 
 
+CLEAN_BLIND_SAMPLES: set[str] = {
+    "lumae_ads_pilot_0008",
+    "lumae_ads_pilot_0010",
+    "lumae_ads_pilot_0011",
+    "lumae_ads_pilot_0017",
+    "lumae_ads_pilot_0018",
+    "lumae_ads_pilot_0020",
+    "lumae_ads_pilot_0037",
+    "lumae_ads_pilot_0043",
+}
+
+CLEAN_QUERY_BLIND5_SAMPLES: set[str] = {
+    "lumae_ads_pilot_0028",
+    "lumae_ads_pilot_0033",
+    "lumae_ads_pilot_0040",
+    "lumae_ads_pilot_0045",
+    "lumae_ads_pilot_0048",
+}
+
+
 def main() -> None:
     initialize_session_state()
 
     st.title("🎬 LUMAE Product Ads — Human Temporal Ground-Truth Review Tool")
-    st.caption("Stage A.2.5B Protocol • Local CPU Only • AI-Assisted + Blind Holdout • 0.1s Precision")
+    st.caption("Stage A.2.5B/E/G/I Protocol • Local CPU Only • AI-Assisted + Blind Holdout + Query Sanitation • 0.1s Precision")
 
     # 1. Sidebar - Mode & Progress Dashboard
     with st.sidebar:
@@ -115,6 +138,9 @@ def main() -> None:
         mode_options = [
             AnnotationMode.AI_ASSISTED_PRIMARY.value,
             AnnotationMode.PRIMARY.value,
+            AnnotationMode.BLIND_PRIMARY.value,
+            AnnotationMode.QUERY_SANITATION.value,
+            AnnotationMode.BLIND_QUERY_REVIEW.value,
             AnnotationMode.SECONDARY.value,
             AnnotationMode.ADJUDICATION.value,
         ]
@@ -125,6 +151,7 @@ def main() -> None:
             help=(
                 "AI_ASSISTED_PRIMARY: AI candidate pre-annotations with blind holdout privacy;\n"
                 "PRIMARY: Manual primary review;\n"
+                "BLIND_PRIMARY: Strict blind human review (AI pre-annotations completely suppressed);\n"
                 "SECONDARY: Independent blind review (human_02);\n"
                 "ADJUDICATION: Adjudication for tIoU < 0.70"
             ),
@@ -139,10 +166,16 @@ def main() -> None:
         # Load pre-annotations & holdout
         ai_candidates = load_ai_preannotations()
         holdout_info = load_blind_holdout()
-        holdout_sample_ids = set(holdout_info.get("sample_ids", []))
+        holdout_sample_ids = set(holdout_info.get("sample_ids", [])) | CLEAN_BLIND_SAMPLES
 
         # Load records depending on mode
-        if mode in (AnnotationMode.AI_ASSISTED_PRIMARY.value, AnnotationMode.PRIMARY.value):
+        if mode in (
+            AnnotationMode.AI_ASSISTED_PRIMARY.value,
+            AnnotationMode.PRIMARY.value,
+            AnnotationMode.BLIND_PRIMARY.value,
+            AnnotationMode.QUERY_SANITATION.value,
+            AnnotationMode.BLIND_QUERY_REVIEW.value,
+        ):
             records = load_primary_records()
             annotator_label = "human_01 (Lead Reviewer)"
         elif mode == AnnotationMode.SECONDARY.value:
@@ -228,11 +261,23 @@ def main() -> None:
     curr_list_idx = st.session_state["current_index"]
     orig_idx, current_record = filtered_records[curr_list_idx]
 
-    # Check Blind Holdout Condition (Step 17, 21)
-    is_holdout = is_blind_holdout(current_record.sample_id)
+    # Check Blind Holdout, Clean Blind, and Clean Query Blind Condition (Stage A.2.5E/G/I)
+    is_clean_blind = current_record.sample_id in CLEAN_BLIND_SAMPLES
+    is_clean_query_blind = current_record.sample_id in CLEAN_QUERY_BLIND5_SAMPLES
+    is_query_sanitation_mode = (
+        is_clean_query_blind
+        or mode in (AnnotationMode.QUERY_SANITATION.value, AnnotationMode.BLIND_QUERY_REVIEW.value)
+    )
+    is_holdout = is_blind_holdout(current_record.sample_id) or is_clean_blind or is_clean_query_blind
     is_reviewed = current_record.is_human_reviewed()
-    is_blind_mode = (mode == AnnotationMode.AI_ASSISTED_PRIMARY.value and is_holdout and not is_reviewed)
-    ai_cand = ai_candidates.get(current_record.sample_id)
+    is_blind_mode = (
+        is_query_sanitation_mode
+        or (is_clean_blind and not is_reviewed)
+        or (mode == AnnotationMode.BLIND_PRIMARY.value and not is_reviewed)
+        or (mode == AnnotationMode.AI_ASSISTED_PRIMARY.value and is_holdout and not is_reviewed)
+    )
+    # Strict privacy: candidate pre-annotations completely suppressed in blind mode
+    ai_cand = None if is_blind_mode else ai_candidates.get(current_record.sample_id)
 
     # 2. Main Content Header
     st.markdown(f"### Sample {curr_list_idx + 1} of {len(filtered_records)} — `{current_record.sample_id}`")
@@ -279,12 +324,113 @@ def main() -> None:
                 st.info("No secondary review completed for this sample yet.")
 
     with col_form:
+        if is_query_sanitation_mode:
+            st.subheader("🔍 Query Sanitation & Verification")
+            if is_clean_query_blind:
+                st.warning(
+                    "🔒 **Stage A.2.5I Protocol • Clean-Blind Query Review (BLIND_QUERY_REVIEW)** — "
+                    "Independent human query verification only. Temporal boundary annotations and AI temporal "
+                    "predictions are strictly suppressed from the interface and DOM."
+                )
+            else:
+                st.info(
+                    "📝 **Query Sanitation Mode** — Human verification of temporal query suitability. "
+                    "Temporal boundary annotations are locked until query is verified."
+                )
+
+            st.markdown("**Original Lumae-Generated Draft Query:**")
+            st.markdown(f"> *{current_record.original_query or current_record.query}*")
+
+            q_qual_choice = st.radio(
+                "Original Query Quality:",
+                [
+                    OriginalQueryQuality.VAGUE_BUT_RELEVANT.value,
+                    OriginalQueryQuality.VALID.value,
+                    OriginalQueryQuality.INCORRECT_FOR_VIDEO.value,
+                    OriginalQueryQuality.INVALID_OR_UNLOCALIZABLE.value,
+                ],
+                index=0,
+                key=f"q_qual_{current_record.sample_id}",
+                help="Classify suitability of initial Lumae draft query template for the video.",
+            )
+
+            q_default = st.session_state.get(f"q_input_{current_record.sample_id}", current_record.query)
+            final_query = st.text_area(
+                "Final Human Query (Action-Conditioned & Observable):",
+                value=q_default,
+                help="Visible, observable, temporally localizable natural language query.",
+                key=f"final_query_san_{current_record.sample_id}",
+            )
+
+            is_localizable = st.checkbox(
+                "Event is temporally localizable in video",
+                value=True,
+                key=f"chk_localizable_{current_record.sample_id}",
+            )
+
+            notes_input = st.text_area(
+                "Query Review Notes:",
+                value=current_record.annotation_notes,
+                help="Note rationale for query classification or rewrite.",
+                key=f"notes_san_{current_record.sample_id}",
+            )
+
+            if st.button("💾 Save Query Review", type="primary", use_container_width=True, key=f"btn_save_query_{current_record.sample_id}"):
+                from data_process.annotation.query_sanitation import save_query_review
+                from datetime import datetime, timezone
+                import time
+
+                q_status = (
+                    QueryReviewStatus.VALID_AS_IS.value
+                    if final_query.strip() == current_record.query.strip() and q_qual_choice == OriginalQueryQuality.VALID.value
+                    else QueryReviewStatus.HUMAN_EDITED.value
+                )
+                if q_qual_choice == OriginalQueryQuality.INVALID_OR_UNLOCALIZABLE.value:
+                    q_status = QueryReviewStatus.EXCLUDE.value
+
+                q_rec = QueryReviewRecord(
+                    sample_id=current_record.sample_id,
+                    video_filename=current_record.video_filename,
+                    source_dataset=current_record.source_dataset,
+                    source_video_id=current_record.source_video_id,
+                    original_query=current_record.original_query or current_record.query,
+                    human_final_query=final_query.strip(),
+                    query_review_status=q_status,
+                    original_query_quality=q_qual_choice,
+                    query_change_type="UNCHANGED" if final_query.strip() == current_record.query.strip() else "REWRITTEN",
+                    query_localizable=is_localizable,
+                    query_observable=True,
+                    reviewer_id=annotator_label.split()[0] if annotator_label else "human_01",
+                    review_notes=notes_input.strip(),
+                    reviewed_at_utc=datetime.now(timezone.utc).isoformat(),
+                    query_version="lumae_query_v1",
+                    temporal_annotation_locked=True,
+                )
+                save_query_review(q_rec)
+                current_record.query = final_query.strip()
+                st.success("✅ Query review saved successfully!")
+                time.sleep(0.4)
+                st.rerun()
+
+            # Navigation buttons
+            st.markdown("---")
+            c_prev, c_next = st.columns(2)
+            with c_prev:
+                if st.button("⬅️ Previous Sample", key=f"btn_prev_{current_record.sample_id}", use_container_width=True, disabled=(curr_list_idx == 0)):
+                    st.session_state["current_index"] = max(0, curr_list_idx - 1)
+                    st.rerun()
+            with c_next:
+                if st.button("Next Sample ➡️", key=f"btn_next_{current_record.sample_id}", use_container_width=True, disabled=(curr_list_idx >= len(filtered_records) - 1)):
+                    st.session_state["current_index"] = min(len(filtered_records) - 1, curr_list_idx + 1)
+                    st.rerun()
+            return
+
         st.subheader("📝 Query & Temporal Boundaries")
 
-        # BLIND HOLDOUT SUPPRESSION (Step 17, 21)
+        # BLIND HOLDOUT SUPPRESSION (Step 17, 21, Stage A.2.5E)
         if is_blind_mode:
             st.warning(
-                "🔒 **Blind Human Holdout Sample** — AI candidate pre-annotations are strictly suppressed "
+                "🔒 **Blind Human Holdout Sample (BLIND_PRIMARY)** — AI candidate pre-annotations are strictly suppressed "
                 "until your independent primary human review is submitted."
             )
         elif mode == AnnotationMode.AI_ASSISTED_PRIMARY.value and ai_cand:
@@ -379,14 +525,18 @@ def main() -> None:
 
         if not enable_multi:
             # Single window inputs
-            default_start = st.session_state.get(
-                f"start_{current_record.sample_id}",
-                existing_windows[0][0] if existing_windows else 0.0,
-            )
-            default_end = st.session_state.get(
-                f"end_{current_record.sample_id}",
-                existing_windows[0][1] if existing_windows else min(current_record.duration_seconds, 10.0),
-            )
+            if is_blind_mode and not is_reviewed:
+                default_start = st.session_state.get(f"start_{current_record.sample_id}", None)
+                default_end = st.session_state.get(f"end_{current_record.sample_id}", None)
+            else:
+                default_start = st.session_state.get(
+                    f"start_{current_record.sample_id}",
+                    existing_windows[0][0] if existing_windows else 0.0,
+                )
+                default_end = st.session_state.get(
+                    f"end_{current_record.sample_id}",
+                    existing_windows[0][1] if existing_windows else min(current_record.duration_seconds, 10.0),
+                )
 
             c_t1, c_t2 = st.columns(2)
             with c_t1:
@@ -394,7 +544,7 @@ def main() -> None:
                     "START (seconds):",
                     min_value=0.0,
                     max_value=max(0.0, current_record.duration_seconds),
-                    value=float(default_start),
+                    value=float(default_start) if default_start is not None else None,
                     step=0.1,
                     format="%.1f",
                     disabled=(q_status_choice == QueryStatus.INVALID_VIDEO.value),
@@ -405,13 +555,16 @@ def main() -> None:
                     "END (seconds):",
                     min_value=0.0,
                     max_value=max(0.0, current_record.duration_seconds),
-                    value=float(default_end),
+                    value=float(default_end) if default_end is not None else None,
                     step=0.1,
                     format="%.1f",
                     disabled=(q_status_choice == QueryStatus.INVALID_VIDEO.value),
                     key=f"num_end_{current_record.sample_id}",
                 )
-            final_windows = [[round(start_val, 1), round(end_val, 1)]] if q_status_choice != QueryStatus.INVALID_VIDEO.value else []
+            if start_val is not None and end_val is not None and q_status_choice != QueryStatus.INVALID_VIDEO.value:
+                final_windows = [[round(start_val, 1), round(end_val, 1)]]
+            else:
+                final_windows = []
         else:
             # Multi-window editing
             st.info("Enter start and end for each discontinuous window segment.")
@@ -469,7 +622,7 @@ def main() -> None:
 
         # Button label adapts to mode
         if is_blind_mode:
-            save_label = "💾 SAVE BLIND HUMAN"
+            save_label = "💾 Save Human Review"
         elif mode == AnnotationMode.AI_ASSISTED_PRIMARY.value:
             save_label = "💾 SAVE HUMAN VERIFIED"
         else:
@@ -625,7 +778,7 @@ def handle_save(
             save_multi_window(record.sample_id, windows)
 
     # 4. Save to storage
-    if mode in (AnnotationMode.PRIMARY.value, AnnotationMode.AI_ASSISTED_PRIMARY.value):
+    if mode in (AnnotationMode.PRIMARY.value, AnnotationMode.AI_ASSISTED_PRIMARY.value, AnnotationMode.BLIND_PRIMARY.value):
         save_primary_records(records)
     elif mode == AnnotationMode.SECONDARY.value:
         save_secondary_records(records)
