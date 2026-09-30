@@ -34,6 +34,8 @@ class AnnotationMode(str, Enum):
     ADJUDICATION = "ADJUDICATION"
     QUERY_SANITATION = "QUERY_SANITATION"
     BLIND_QUERY_REVIEW = "BLIND_QUERY_REVIEW"
+    CLEAN_QUERY_BLIND_TEMPORAL = "CLEAN_QUERY_BLIND_TEMPORAL"
+    ASSISTED_TEMPORAL_REVIEW = "ASSISTED_TEMPORAL_REVIEW"
 
 
 class QueryReviewStatus(str, Enum):
@@ -306,17 +308,29 @@ class QueryReviewRecord:
     ai_suggested_query: str = ""
     human_final_query: str = ""
     query_review_status: str = QueryReviewStatus.PENDING_QUERY_REVIEW.value
-    original_query_quality: str = OriginalQueryQuality.VAGUE_BUT_RELEVANT.value
-    query_change_type: str = "UNCHANGED"
-    query_localizable: bool = True
-    query_observable: bool = True
+    original_query_quality: str = ""
+    query_change_type: str = ""
+    query_localizable: bool | str = ""
+    query_observable: bool | str = ""
     reviewer_id: str = ""
     review_notes: str = ""
     reviewed_at_utc: str = ""
-    query_version: str = "lumae_query_v1"
-    temporal_annotation_locked: bool = True
+    query_version: str = "1"
+    temporal_annotation_locked: bool | str = True
 
     def to_csv_dict(self) -> dict[str, str]:
+        def _fmt(val: Any) -> str:
+            if val is True:
+                return "TRUE"
+            if val is False:
+                return "FALSE"
+            if isinstance(val, str):
+                s = val.strip()
+                if s.upper() in ("TRUE", "FALSE"):
+                    return s.upper()
+                return s
+            return str(val) if val is not None else ""
+
         return {
             "sample_id": self.sample_id,
             "video_filename": self.video_filename,
@@ -328,21 +342,28 @@ class QueryReviewRecord:
             "query_review_status": self.query_review_status,
             "original_query_quality": self.original_query_quality,
             "query_change_type": self.query_change_type,
-            "query_localizable": str(self.query_localizable),
-            "query_observable": str(self.query_observable),
+            "query_localizable": _fmt(self.query_localizable),
+            "query_observable": _fmt(self.query_observable),
             "reviewer_id": self.reviewer_id,
             "review_notes": self.review_notes,
             "reviewed_at_utc": self.reviewed_at_utc,
-            "query_version": self.query_version,
-            "temporal_annotation_locked": str(self.temporal_annotation_locked),
+            "query_version": str(self.query_version),
+            "temporal_annotation_locked": _fmt(self.temporal_annotation_locked),
         }
 
     @classmethod
     def from_csv_dict(cls, row: dict[str, str]) -> QueryReviewRecord:
-        def _parse_bool(val: Any) -> bool:
+        def _parse_bool_or_str(val: Any, default: Any = "") -> Any:
             if isinstance(val, bool):
                 return val
-            return str(val).strip().lower() in ("true", "1", "yes")
+            s = str(val).strip()
+            if s.upper() in ("TRUE", "1", "YES"):
+                return True
+            if s.upper() in ("FALSE", "0", "NO"):
+                return False
+            if s == "":
+                return default
+            return s
 
         return cls(
             sample_id=row["sample_id"].strip(),
@@ -353,14 +374,13 @@ class QueryReviewRecord:
             ai_suggested_query=row.get("ai_suggested_query", "").strip(),
             human_final_query=row.get("human_final_query", "").strip(),
             query_review_status=row.get("query_review_status", QueryReviewStatus.PENDING_QUERY_REVIEW.value).strip(),
-            original_query_quality=row.get("original_query_quality", OriginalQueryQuality.VAGUE_BUT_RELEVANT.value).strip(),
-            query_change_type=row.get("query_change_type", "UNCHANGED").strip(),
-            query_localizable=_parse_bool(row.get("query_localizable", True)),
-            query_observable=_parse_bool(row.get("query_observable", True)),
+            original_query_quality=row.get("original_query_quality", "").strip(),
+            query_change_type=row.get("query_change_type", "").strip(),
+            query_localizable=_parse_bool_or_str(row.get("query_localizable", ""), default=""),
+            query_observable=_parse_bool_or_str(row.get("query_observable", ""), default=""),
             reviewer_id=row.get("reviewer_id", "").strip(),
             review_notes=row.get("review_notes", "").strip(),
             reviewed_at_utc=row.get("reviewed_at_utc", "").strip(),
-            query_version=row.get("query_version", "lumae_query_v1").strip(),
-            temporal_annotation_locked=_parse_bool(row.get("temporal_annotation_locked", True)),
+            query_version=row.get("query_version", "1").strip(),
+            temporal_annotation_locked=_parse_bool_or_str(row.get("temporal_annotation_locked", "TRUE"), default=True),
         )
-

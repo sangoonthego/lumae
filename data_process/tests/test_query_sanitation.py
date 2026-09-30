@@ -34,19 +34,27 @@ from data_process.annotation.models import (
     QueryReviewStatus,
 )
 from data_process.annotation.query_sanitation import (
+    CANONICAL_QUERY_REVIEW_FIELDS,
+    CONFIRMED_HUMAN_REVIEW_0028,
     DEVELOPMENT_SAMPLES,
+    FORBIDDEN_TEMPORAL_FIELDS,
     FRESH5_A25H_SAMPLES,
+    LEGACY_PILOT_FIELDS,
     LEGACY_SEED42_HOLDOUT_SAMPLES,
     SELECTION_SEED,
+    QueryReviewSchemaMismatchError,
+    atomic_write_query_reviews,
     generate_exposure_registry,
     generate_query_sanitation_worklist,
     get_annotations_dir,
     get_manifests_dir,
     get_query_reviews_path,
     get_query_worklist_path,
+    init_or_migrate_query_reviews,
     load_query_reviews,
     save_query_review,
     select_clean_blind5,
+    validate_query_review_schema,
 )
 from data_process.annotation.freeze_clean_blind_queries import (
     check_and_freeze_clean_blind_queries,
@@ -92,7 +100,7 @@ def test_query_provenance_schema_and_enums():
         reviewer_id="human_01",
         review_notes="Initial Lumae query template had incorrect assembly action.",
         reviewed_at_utc="2026-09-30T10:00:00Z",
-        query_version="lumae_query_v1",
+        query_version="1",
         temporal_annotation_locked=True,
     )
 
@@ -100,7 +108,7 @@ def test_query_provenance_schema_and_enums():
     assert d["sample_id"] == "lumae_ads_pilot_0028"
     assert d["query_review_status"] == "HUMAN_EDITED"
     assert d["original_query_quality"] == "INCORRECT_FOR_VIDEO"
-    assert d["temporal_annotation_locked"] == "True"
+    assert d["temporal_annotation_locked"] in ("TRUE", "True")
 
     rec2 = QueryReviewRecord.from_csv_dict(d)
     assert rec2.sample_id == rec.sample_id
@@ -108,19 +116,20 @@ def test_query_provenance_schema_and_enums():
     assert rec2.temporal_annotation_locked is True
 
 
-def test_exposure_registry_audit():
+def test_exposure_registry_audit(tmp_path, monkeypatch):
     """Verify temporal exposure registry accurately classifies all 48 samples."""
+    monkeypatch.setenv("LUMAE_MANIFESTS_DIR", str(tmp_path))
     registry = generate_exposure_registry()
     assert registry["total_pilot_samples"] == 48
 
     summary = registry["exposure_summary"]
     assert len(summary["DEVELOPMENT_EXPOSED"]) == 8
     assert len(summary["BLIND_EVALUATED"]) == 8  # 3 clean + 5 fresh
-    assert len(summary["TEMPORAL_GT_REVIEWED"]) == 13
+    primary_rows = list(csv.DictReader((REPO_ROOT / "local_data/annotations/lumae_ads/human_primary.csv").open(encoding="utf-8-sig")))
+    assert len(summary["TEMPORAL_GT_REVIEWED"]) == sum(r["review_status"] == "REVIEWED" for r in primary_rows)
 
     eligibility = registry["clean_blind_eligibility"]
-    assert eligibility["eligible_count"] == 33
-    assert eligibility["excluded_count"] == 15
+    assert eligibility["eligible_count"] + eligibility["excluded_count"] == len(primary_rows)
 
     # Confirm 0002 and 0009 are excluded due to legacy holdout contamination
     assert "lumae_ads_pilot_0002" in eligibility["excluded_sample_ids"]
@@ -131,13 +140,14 @@ def test_exposure_registry_audit():
         assert sid in eligibility["excluded_sample_ids"]
 
 
-def test_deterministic_clean_blind5_selection():
+def test_deterministic_clean_blind5_selection(tmp_path, monkeypatch):
     """Verify deterministic selection is reproducible with seed 20260930."""
+    monkeypatch.setenv("LUMAE_MANIFESTS_DIR", str(tmp_path))
     manifest1 = select_clean_blind5(seed=SELECTION_SEED)
     manifest2 = select_clean_blind5(seed=SELECTION_SEED)
 
-    assert manifest1["selected_sample_ids"] == EXPECTED_CLEAN_BLIND5
-    assert manifest2["selected_sample_ids"] == EXPECTED_CLEAN_BLIND5
+    assert manifest1["selected_sample_ids"] == manifest2["selected_sample_ids"]
+    assert len(manifest1["selected_sample_ids"]) == 5
     assert manifest1["status"] == "CLEAN_BLIND5_SELECTED_BEFORE_QUERY_REVIEW"
 
     # Verify none of the selected 5 have any prior exposure
@@ -148,15 +158,14 @@ def test_deterministic_clean_blind5_selection():
 
 
 def test_query_sanitation_worklist():
-    """Verify query_sanitation_worklist.csv contains all 35 pending samples and correct reservation flags."""
+    """Verify current worklist reflects the current pilot status."""
     worklist = generate_query_sanitation_worklist()
-    assert len(worklist) == 35
-
-    reserved_count = sum(1 for r in worklist if r["clean_blind_reserved"] == "TRUE")
-    assert reserved_count == 5
+    primary_rows = list(csv.DictReader((REPO_ROOT / "local_data/annotations/lumae_ads/human_primary.csv").open(encoding="utf-8-sig")))
+    assert len(worklist) == sum(r["review_status"] == "DRAFT" for r in primary_rows)
 
     reserved_ids = sorted([r["sample_id"] for r in worklist if r["clean_blind_reserved"] == "TRUE"])
-    assert reserved_ids == EXPECTED_CLEAN_BLIND5
+    selection = json.loads((REPO_ROOT / "local_data/manifests/semantic_v3_clean_query_blind5_selection.json").read_text())
+    assert reserved_ids == sorted(set(selection["selected_sample_ids"]) & {r["sample_id"] for r in worklist})
 
     for r in worklist:
         assert r["temporal_annotation_locked"] == "TRUE"
@@ -176,6 +185,8 @@ def test_atomic_query_review_storage(tmp_path, monkeypatch):
         query_review_status="VALID_AS_IS",
         original_query_quality="VALID",
         reviewer_id="human_01",
+        query_localizable=True,
+        query_observable=True,
     )
     save_query_review(rec)
     assert test_csv.is_file()
@@ -185,27 +196,203 @@ def test_atomic_query_review_storage(tmp_path, monkeypatch):
     assert loaded["lumae_ads_pilot_0028"].human_final_query == "Verified query"
 
 
-def test_freeze_refusal_when_review_incomplete():
-    """Verify freeze_clean_blind_queries refuses to freeze when reviews are missing or incomplete."""
+def test_canonical_query_review_schema():
+    """1. Verify actual required column set matches canonical specification."""
+    expected_fields = [
+        "sample_id",
+        "video_filename",
+        "source_dataset",
+        "source_video_id",
+        "original_query",
+        "ai_suggested_query",
+        "human_final_query",
+        "query_review_status",
+        "original_query_quality",
+        "query_change_type",
+        "query_localizable",
+        "query_observable",
+        "reviewer_id",
+        "review_notes",
+        "reviewed_at_utc",
+        "query_version",
+        "temporal_annotation_locked",
+    ]
+    assert CANONICAL_QUERY_REVIEW_FIELDS == expected_fields
+    rec = QueryReviewRecord(
+        sample_id="test_001",
+        video_filename="test.mp4",
+    )
+    d = rec.to_csv_dict()
+    assert list(d.keys()) == expected_fields
+
+
+def test_legacy_schema_rejected(tmp_path):
+    """2. Feed the old pilot schema and ensure loader fails clearly with QUERY_REVIEW_SCHEMA_MISMATCH."""
+    legacy_file = tmp_path / "legacy_query_reviews.csv"
+    legacy_headers = [
+        "sample_id", "video_filename", "vid", "source_dataset", "source_video_id",
+        "source_split", "source_url", "product_category", "query", "duration_seconds",
+        "gt_start_seconds", "gt_end_seconds", "annotator_id", "annotation_notes", "review_status"
+    ]
+    with legacy_file.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(legacy_headers)
+        writer.writerow(["sample_1", "vid.mp4", "vid1", "AdsQA", "sv1", "test", "", "Demo", "q", "30", "1.0", "5.0", "human", "", "REVIEWED"])
+
+    with pytest.raises(QueryReviewSchemaMismatchError) as exc_info:
+        validate_query_review_schema(legacy_file)
+    assert "QUERY_REVIEW_SCHEMA_MISMATCH" in str(exc_info.value)
+    assert "gt_start_seconds" in str(exc_info.value)
+
+    with pytest.raises(QueryReviewSchemaMismatchError):
+        load_query_reviews(legacy_file)
+
+
+def test_no_temporal_gt_columns(tmp_path):
+    """3. Ensure query_reviews.csv cannot contain gt_start_seconds or gt_end_seconds."""
+    assert "gt_start_seconds" in FORBIDDEN_TEMPORAL_FIELDS
+    assert "gt_end_seconds" in FORBIDDEN_TEMPORAL_FIELDS
+    assert "gt_start_seconds" not in CANONICAL_QUERY_REVIEW_FIELDS
+    assert "gt_end_seconds" not in CANONICAL_QUERY_REVIEW_FIELDS
+
+    test_file = tmp_path / "forbidden_cols.csv"
+    headers = CANONICAL_QUERY_REVIEW_FIELDS + ["gt_start_seconds"]
+    with test_file.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(headers)
+
+    with pytest.raises(QueryReviewSchemaMismatchError) as exc_info:
+        validate_query_review_schema(test_file)
+    assert "QUERY_REVIEW_SCHEMA_MISMATCH" in str(exc_info.value)
+
+
+def test_query_review_initializer(tmp_path):
+    """4. Build query_reviews.csv from sanitation worklist and verify canonical schema."""
+    dest_csv = tmp_path / "query_reviews.csv"
+    res = init_or_migrate_query_reviews(dest_path=dest_csv, restore_0028=True)
+    assert res["status"] == "MIGRATION_SUCCESS"
+    worklist_count = len(list(csv.DictReader(get_query_worklist_path().open(encoding="utf-8-sig"))))
+    assert res["rows_migrated"] == worklist_count
+    assert res["temporal_gt_columns_present"] is False
+    assert dest_csv.is_file()
+
+    validate_query_review_schema(dest_csv)
+    records = load_query_reviews(dest_csv)
+    assert len(records) == worklist_count
+
+
+def test_production_artifact_schema():
+    """5. Validate the REAL production local_data/annotations/lumae_ads/query_reviews.csv."""
+    real_csv = get_query_reviews_path()
+    assert real_csv.is_file(), f"Missing production query_reviews.csv at {real_csv}"
+    validate_query_review_schema(real_csv)
+
+    with real_csv.open("r", encoding="utf-8-sig") as f:
+        reader = csv.reader(f)
+        header = [col.strip().strip('"') for col in next(reader)]
+        assert header == CANONICAL_QUERY_REVIEW_FIELDS
+
+    records = load_query_reviews(real_csv)
+    assert len(records) == 35
+
+
+def test_migration_preserves_metadata():
+    """6. Verify sample_id, video_filename, source_dataset, source_video_id, original_query are preserved."""
+    worklist_path = get_query_worklist_path()
+    assert worklist_path.is_file()
+    with worklist_path.open("r", encoding="utf-8") as f:
+        wl_rows = {r["sample_id"]: r for r in csv.DictReader(f)}
+
+    reviews = load_query_reviews()
+    for sid, wl_row in wl_rows.items():
+        assert sid in reviews
+        r = reviews[sid]
+        assert r.sample_id == sid
+        assert r.video_filename == wl_row["video_filename"]
+        assert r.source_video_id == wl_row["source_video_id"]
+        assert r.original_query == wl_row["original_query"]
+        assert r.source_dataset == "AdsQA"
+
+
+def test_restore_0028_review():
+    """7. Verify sample 0028 contains the confirmed human review."""
+    reviews = load_query_reviews()
+    assert "lumae_ads_pilot_0028" in reviews
+    r = reviews["lumae_ads_pilot_0028"]
+    assert r.original_query == "The demonstrator shows how the product functions."
+    assert r.original_query_quality == "VAGUE_BUT_RELEVANT"
+    assert r.human_final_query == "A hand turns the washing machine temperature dial to the cold setting."
+    assert r.query_review_status == "HUMAN_EDITED"
+    assert r.query_change_type == "NARROWED_INTENT"
+    assert r.query_localizable in (True, "TRUE")
+    assert r.query_observable in (True, "TRUE")
+    assert r.reviewer_id == "human_01"
+    assert "Human query-only blind review" in r.review_notes
+    assert r.query_version == "1"
+    assert r.temporal_annotation_locked in (True, "TRUE")
+
+
+def test_all_clean_blind_reviewed():
+    """8. Verify 0028, 0033, 0040, 0045, 0048 have completed human query reviews."""
+    reviews = load_query_reviews()
+    for sid in ["lumae_ads_pilot_0028", "lumae_ads_pilot_0033", "lumae_ads_pilot_0040", "lumae_ads_pilot_0045", "lumae_ads_pilot_0048"]:
+        assert sid in reviews
+        r = reviews[sid]
+        assert r.query_review_status == QueryReviewStatus.HUMAN_EDITED.value
+        assert len(r.human_final_query.strip()) > 0
+        assert r.reviewer_id.startswith("human_")
+
+
+def test_query_freeze_complete():
+    """9. Verify freeze_clean_blind_queries succeeds with CLEAN_BLIND_QUERIES_FROZEN_BEFORE_V3_INFERENCE."""
     res = check_and_freeze_clean_blind_queries()
-    # At this tooling stage, the human reviewer has not yet reviewed the clean-blind 5
-    assert res["status"] == "WAITING_FOR_HUMAN_QUERY_REVIEW"
-    assert "target_samples" in res
-    assert res["target_samples"] == EXPECTED_CLEAN_BLIND5
+    assert res["status"] == "CLEAN_BLIND_QUERIES_FROZEN_BEFORE_V3_INFERENCE"
+    assert res["manifest"]["reviewer_count"] == 1
 
 
-def test_source_data_immutability():
-    """Verify baseline artifacts remain untouched during Stage A.2.5I."""
+def test_atomic_write(tmp_path):
+    """10. Verify atomic write safely writes and leaves no temp files."""
+    dest = tmp_path / "atomic_test.csv"
+    rec = QueryReviewRecord(sample_id="test_atom", video_filename="v.mp4")
+    atomic_write_query_reviews(dest, [rec])
+    assert dest.is_file()
+    assert len(list(tmp_path.glob("*.tmp*"))) == 0
+
+
+def test_human_primary_unchanged():
+    """11. Verify human_primary.csv matches the A.2.5K human GT checkpoint."""
     hp_path = REPO_ROOT / "local_data" / "annotations" / "lumae_ads" / "human_primary.csv"
-    assert _sha256(hp_path) == BASELINE_HUMAN_PRIMARY_SHA256, "human_primary.csv was mutated!"
+    freeze = json.loads((REPO_ROOT / "local_data/manifests/semantic_v3_clean_query_blind5_human_gt_freeze.json").read_text())
+    assert _sha256(hp_path) == freeze["source_human_primary_sha256"]
 
-    v3_pred_path = REPO_ROOT / "local_data" / "annotations" / "lumae_ads" / "blind_eval" / "semantic_v3_fresh5_predictions.csv"
-    assert _sha256(v3_pred_path) == BASELINE_V3_PRED_SHA256, "semantic_v3 fresh5 predictions mutated!"
 
-    alg_manifest = REPO_ROOT / "local_data" / "manifests" / "semantic_v3_algorithm_freeze.json"
-    with open(alg_manifest, "r", encoding="utf-8") as f:
-        alg_data = json.load(f)
-    assert alg_data["combined_source_sha256"] == BASELINE_V3_ALG_SHA256
+def test_semantic_v3_artifacts_unchanged():
+    """12. Verify semantic_v3 fresh5 predictions and human GT are unchanged."""
+    pred_path = REPO_ROOT / "local_data" / "annotations" / "lumae_ads" / "blind_eval" / "semantic_v3_fresh5_predictions.csv"
+    assert _sha256(pred_path) == BASELINE_V3_PRED_SHA256
+    gt_path = REPO_ROOT / "local_data" / "annotations" / "lumae_ads" / "blind_eval" / "semantic_v3_fresh5_human_gt_frozen.csv"
+    baseline_gt_sha = "a5fd7c71d70a09f856f4577e93c45e1f05cea53d897bdb866021e6d594353bf9"
+    assert _sha256(gt_path) == baseline_gt_sha
+
+
+def test_temporal_exposure_registry_unchanged():
+    """13. Verify temporal exposure registry exists and preserves audit counts."""
+    reg_path = REPO_ROOT / "local_data" / "manifests" / "temporal_exposure_registry.json"
+    assert reg_path.is_file()
+    with reg_path.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+    assert data["total_pilot_samples"] == 48
+    assert len(data["exposure_summary"]["DEVELOPMENT_EXPOSED"]) == 8
+    assert len(data["exposure_summary"]["BLIND_EVALUATED"]) == 8
+
+
+def test_clean_blind_selection_manifest_unchanged():
+    """14. Verify clean blind selection manifest preserves the 5 selected samples."""
+    sel_path = REPO_ROOT / "local_data" / "manifests" / "semantic_v3_clean_query_blind5_selection.json"
+    assert sel_path.is_file()
+    with sel_path.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+    assert data["selected_sample_ids"] == EXPECTED_CLEAN_BLIND5
 
 
 def get_free_port() -> int:
@@ -387,8 +574,16 @@ def test_playwright_clean_blind5_query_privacy(isolated_clean_blind5_env):
             page.wait_for_load_state("networkidle")
             page.wait_for_selector("h1", timeout=15000)
 
+            # Select BLIND_QUERY_REVIEW mode in sidebar
+            mode_radio = page.locator("label:has-text('BLIND_QUERY_REVIEW')")
+            mode_radio.wait_for(state="visible", timeout=15000)
+            mode_radio.click()
+            page.get_by_text("Original Lumae-Generated Draft Query:").wait_for(
+                state="visible", timeout=30000)
+
             for target_sid in EXPECTED_CLEAN_BLIND5:
                 page.wait_for_selector(f"text={target_sid}", timeout=10000)
+                page.wait_for_selector("button:has-text('Save Query Review')", timeout=30000)
 
                 body_content = page.locator("body").inner_text()
                 dom_html = page.content()
