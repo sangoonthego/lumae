@@ -1,0 +1,38 @@
+{
+  "experiment_id": "M1_lumae_ads_d200",
+  "parent_id": "M0_baseline",
+  "dataset_version": "lumae_ads_d200",
+  "training_handoff_path": "local_data/manifests/lumae_ads_d200_training_handoff.json",
+  "model": {
+    "name": "Moment-DETR",
+    "feature_extractor": "CLIP-ViT-B/32",
+    "temporal_resolution_seconds": 2.0,
+    "max_duration_seconds": 150.0
+  },
+  "training": {
+    "dataset_path": "local_data/datasets/lumae_ads_d200/lumae_ads_d200_train.jsonl",
+    "batch_size": 4,
+    "learning_rate": 0.00001,
+    "max_epochs": 50,
+    "early_stopping_patience": 10,
+    "optimizer": "AdamW",
+    "weight_decay": 0.0001,
+    "saliency_loss_weight": 0.0,
+    "label_provenance_counts": {"human_verified": 18, "ai_pseudo_labeled": 122},
+    "loss_weights": {"span_loss": 5.0, "giou_loss": 2.0}
+  },
+  "validation": {
+    "dataset_path": "local_data/datasets/lumae_ads_d200/lumae_ads_d200_val.jsonl",
+    "frequency_epochs": 1,
+    "label_provenance": "AI_PSEUDO_LABELED_ONLY",
+    "checkpoint_selection_metric": "pseudo_R1_at_0.5_then_mean_IoU"
+  },
+  "evaluation": {
+    "datasets": [{
+      "name": "Lumae_Ads_D200_sealed_test",
+      "split_path": "local_data/datasets/lumae_ads_d200/lumae_ads_d200_test.jsonl",
+      "metrics": ["R1@0.5", "R1@0.7", "MR_mAP", "mIoU"]
+    }]
+  },
+  "status": "READY_FOR_M1_D200_COLAB"
+}

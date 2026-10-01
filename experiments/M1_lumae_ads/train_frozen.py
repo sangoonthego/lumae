@@ -20,6 +20,7 @@ import zipfile
 
 VERSION = "lumae_ads_v1"
 HANDOFF = Path("local_data/manifests/lumae_ads_v1_training_handoff.json")
+CONFIG = Path("experiments/M1_lumae_ads/config.json")
 VIDEOS = Path("local_data/raw/adsqa/videos")
 SPLITS = ("train", "val", "test")
 
@@ -221,7 +222,7 @@ def train(root: Path, moment_root: Path, checkpoint_path: Path, feature_root: Pa
 
     root, feature_root = root.resolve(), feature_root.resolve()
     handoff, manifest, rows = preflight(root)
-    experiment_config = _json(root / "experiments/M1_lumae_ads/config.json")
+    experiment_config = _json(root / CONFIG)
     if experiment_config.get("dataset_version") != VERSION:
         raise ValueError("M1 config targets another dataset version")
     video_dir, text_dir = _verify_features(feature_root, manifest, rows)
@@ -343,10 +344,12 @@ def train(root: Path, moment_root: Path, checkpoint_path: Path, feature_root: Pa
         "best_checkpoint_sha256": sha256(run_dir / "model_best.ckpt"),
         "best_epoch": best_epoch, "best_val_pseudo_r1_at_0_5": best[0],
         "best_val_pseudo_mean_iou": best[1],
-        "validation_label_provenance": "7 AI_PSEUDO_LABELED samples; no human verified val labels",
-        "pseudo_label_quality_warning": "All 30 v1 pseudo intervals have LOW semantic confidence and zero ranking margin.",
+        "validation_label_provenance": f"{len(rows['val'])} AI_PSEUDO_LABELED samples; no human verified val labels",
+        "pseudo_label_quality_warning": handoff.get("annotation_warning",
+            "All 30 v1 pseudo intervals have LOW semantic confidence and zero ranking margin."),
         "test_split_used": False,
-        "training_label_provenance": {"human_verified": 18, "ai_pseudo_labeled": 16},
+        "training_label_provenance": dict(Counter(r["metadata"]["review_provenance"].lower()
+                                                   for r in rows["train"])),
     }
     (run_dir / "result.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return result
