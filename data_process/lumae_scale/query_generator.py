@@ -20,12 +20,15 @@ class QueryGenerator(ABC):
 class AgentEvidenceProvider(QueryGenerator):
     """Reads only explicit agent-authored descriptions of viewed contact sheets."""
 
+    def __init__(self, *, work=None, visual_cache=None):
+        self.work, self.visual_cache = work, visual_cache
+
     def events(self, video_id: str) -> list[dict]:
-        path = WORK / "visual_index" / video_id / "visual_events.json"
+        path = (self.work or WORK) / "visual_index" / video_id / "visual_events.json"
         if not path.is_file():
             return []
         data = read_json(path)
-        index = read_json(VISUAL_CACHE / video_id / "metadata.json")
+        index = read_json((self.visual_cache or VISUAL_CACHE) / video_id / "metadata.json")
         if data.get("inspection_method") == "agent_viewed_overview":
             overview = resolve_path(data.get("overview_path", ""))
             if (not overview.is_file() or digest(overview) != data.get("overview_sha256")
@@ -94,9 +97,9 @@ def validate_events(video_id: str, events: list[dict], duration: float) -> list[
     return valid
 
 
-def require_agent_inspection(video_id: str) -> None:
+def require_agent_inspection(video_id: str, *, work=None) -> None:
     """For local VLM output, require a separate agent record of viewed sheets."""
-    path = WORK / "visual_index" / video_id / "agent_inspection.json"
+    path = (work or WORK) / "visual_index" / video_id / "agent_inspection.json"
     if not path.is_file():
         raise ValueError("Local VLM output requires agent inspection of contact sheets")
     record = read_json(path)

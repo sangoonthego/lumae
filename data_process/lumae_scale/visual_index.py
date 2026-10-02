@@ -14,21 +14,31 @@ from PIL import Image, ImageDraw, ImageFont
 
 from .models import ROOT, VISUAL_CACHE, WORK, atomic_json, digest, read_json
 from .repo_paths import to_repo_relative
+from .cache_validation import visual_index_valid, clip_npz_valid, atomic_npz
 
 STEP = 2.0
 SHEET_SIZE = 10
 
 
 def build_visual_index(video: Path, duration: float, video_sha256: str,
-                       timer=None) -> dict:
+                       timer=None, *, work: Path | None = None, strict: bool = False) -> dict:
     video_id = video.stem
     out = VISUAL_CACHE / video_id
     metadata_path = out / "metadata.json"
     if metadata_path.exists():
-        old = read_json(metadata_path)
-        frames = [out / item["path"] for item in old["frames"]]
-        sheets = [out / item for item in old["contact_sheets"]]
-        if old["video_sha256"] == video_sha256 and all(p.is_file() for p in frames + sheets):
+        try:
+            old = read_json(metadata_path)
+        except (ValueError, OSError):
+            if not strict: raise
+            old = {"frames": [], "contact_sheets": [], "video_sha256": None}
+        valid = visual_index_valid(old, out, video_sha256) if strict else (
+            old["video_sha256"] == video_sha256 and
+            all((out / item["path"]).is_file() for item in old["frames"]) and
+            all((out / item).is_file() for item in old["contact_sheets"]))
+        if strict and valid:
+            from .stage_cache import frame_fingerprint
+            valid = old.get("visual_fingerprint") == frame_fingerprint(old)
+        if valid:
             if timer:
                 timer.mark_cache("visual_index", True)
             return old
@@ -36,6 +46,11 @@ def build_visual_index(video: Path, duration: float, video_sha256: str,
         timer.mark_cache("visual_index", False)
     frames_dir = out / "sampled_frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
+    if strict:
+        # Only a new-source cache reaches this path. Remove stale extra frames
+        # before re-decoding with the unchanged 2-second sampling command.
+        for p in frames_dir.glob("frame_*.jpg"):
+            p.unlink()
     # fps=1/2 preserves the same coarse temporal grid used in CLIP-only training.
     command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(video),
                "-vf", "fps=1/2,scale=320:-2", "-q:v", "4",
@@ -72,8 +87,11 @@ def build_visual_index(video: Path, duration: float, video_sha256: str,
               "duration": duration, "sampling_step_seconds": STEP, "frames": records,
               "contact_sheets": sheets, "feature_extractor": "CLIP ViT-B/32",
               "clip_features_status": "pending"}
+    if strict:
+        from .stage_cache import frame_fingerprint
+        record["visual_fingerprint"] = frame_fingerprint(record)
     atomic_json(metadata_path, record)
-    debug = WORK / "visual_index" / video_id
+    debug = (work or WORK) / "visual_index" / video_id
     atomic_json(debug / "metadata.json", record)
     atomic_json(debug / "sampled_frames.json", records)
     return record
@@ -81,13 +99,18 @@ def build_visual_index(video: Path, duration: float, video_sha256: str,
 
 def extract_clip_features(video_id: str, *, model_path: str = "ViT-B/32",
                           device: str = "cpu", batch_size: int = 16,
-                          timer=None, clip_runtime=None) -> dict:
+                          timer=None, clip_runtime=None, strict: bool = False) -> dict:
     """Cache normalized official OpenAI CLIP embeddings; load weights explicitly."""
     out = VISUAL_CACHE / video_id
     metadata_path = out / "metadata.json"
     record = read_json(metadata_path)
     feature_path = out / "clip_features.npz"
-    if feature_path.exists() and record.get("clip_features_sha256") == digest(feature_path):
+    identity_valid = True
+    if strict:
+        from .stage_cache import clip_fingerprint
+        identity_valid = record.get("clip_fingerprint") == clip_fingerprint(record)
+    if (feature_path.exists() and record.get("clip_features_sha256") == digest(feature_path)
+            and identity_valid and (not strict or clip_npz_valid(feature_path,record))):
         if timer:
             timer.mark_cache("clip", True)
         return record
@@ -109,10 +132,13 @@ def _extract_clip_features(record: dict, out: Path, metadata_path: Path,
     features = runtime.encode_images(paths, batch_size=batch_size, normalize=True)
     if features.shape != (len(paths), 512):
         raise ValueError("Unexpected CLIP feature dimensions")
-    np.savez_compressed(feature_path, features=features,
-                        timestamps=np.array([x["timestamp"] for x in record["frames"]]))
+    atomic_npz(feature_path, features=features,
+               timestamps=np.array([x["timestamp"] for x in record["frames"]]))
     record.update(clip_features_status="complete", clip_features_sha256=digest(feature_path),
                   clip_model=model_path, clip_device=device)
+    if record.get("visual_fingerprint"):
+        from .stage_cache import clip_fingerprint
+        record["clip_fingerprint"] = clip_fingerprint(record)
     atomic_json(metadata_path, record)
     return record
 

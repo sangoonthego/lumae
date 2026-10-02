@@ -33,11 +33,11 @@ from .visual_index import build_visual_index
 SESSION_DIR = WORK / "cpu_sessions"
 
 
-def overview(video_id: str) -> Path:
+def overview(video_id: str, *, work: Path | None = None) -> Path:
     index = read_json(VISUAL_CACHE / video_id / "metadata.json")
     frames = index["frames"]
     tag = hashlib.sha256(json.dumps([(f["timestamp"], f["sha256"]) for f in frames]).encode()).hexdigest()[:12]
-    path = WORK / "visual_index" / video_id / f"overview_{tag}.jpg"
+    path = (work or WORK) / "visual_index" / video_id / f"overview_{tag}.jpg"
     if path.exists():
         return path
     columns = min(5, len(frames))
@@ -71,6 +71,7 @@ class CPUSession:
         self.rows = []
         self.first_printed = False
         self.provider = AgentEvidenceProvider()
+        self.work = WORK
         self.provider.config = {"provider": "Codex compact visual review", "model_id": "GPT-6",
                                 "revision": "not exposed by runtime", "mode": "local_cpu_overview_v1"}
         self.fill_queue()
@@ -170,7 +171,7 @@ class CPUSession:
             raise ValueError("Request video does not match active deterministic source")
         if action == "events":
             index = read_json(VISUAL_CACHE / self.active / "metadata.json")
-            path = overview(self.active)
+            path = overview(self.active, work=self.work)
             for event in payload["events"]:
                 if not event.get("evidence_sheets"):
                     positions = [n for n, f in enumerate(index["frames"])
@@ -182,16 +183,21 @@ class CPUSession:
                       "events": payload["events"]}
             if "rejection_reason" in payload:
                 record["rejection_reason"] = payload["rejection_reason"]
-            atomic_json(WORK / "visual_index" / self.active / "visual_events.json", record)
+            atomic_json(self.work / "visual_index" / self.active / "visual_events.json", record)
             self.views += payload.get("views", 1)
             return self._run()
         if action == "verify":
-            record = read_json(WORK / "visual_index" / self.active / "visual_events.json")
+            record = read_json(self.work / "visual_index" / self.active / "visual_events.json")
             query = payload.get("query", record["events"][0]["query"])
-            auto = read_json(WORK / "visual_index" / self.active / "automatic_verification.json")
+            auto = read_json(self.work / "visual_index" / self.active / "automatic_verification.json")
             verdict = {"pass": payload["pass"], "notes": payload["notes"],
                        "evidence_timestamps": auto["evidence_timestamps"]}
-            path = WORK / "visual_index" / self.active / "verifier.json"
+            if hasattr(self, "layout"):
+                from .stage_cache import verifier_identity
+                from .repo_paths import resolve_path
+                pred = read_json(self.work / "predictions" / self.active / (hashlib.sha256(query.encode()).hexdigest()+".json"))
+                verdict["cache_identity"] = verifier_identity(pred, digest(resolve_path(auto["frame_references"][0])), auto["evidence_timestamps"])
+            path = self.work / "visual_index" / self.active / "verifier.json"
             verdicts = read_json(path) if path.exists() else {}
             verdicts[hashlib.sha256(query.encode()).hexdigest()] = verdict
             atomic_json(path, verdicts)
@@ -207,6 +213,7 @@ def main():
     parser.add_argument("action", nargs="?", default="next")
     parser.add_argument("--request", type=Path)
     parser.add_argument("--port", type=int, default=8766)
+    parser.add_argument("--dataset-version", choices=["lumae_ads_d200", "lumae_ads_d500"], default="lumae_ads_d200")
     args = parser.parse_args()
     if args.mode == "client":
         payload = read_json(args.request) if args.request else {}
@@ -214,7 +221,11 @@ def main():
         print(json.dumps(response.json(), indent=2, ensure_ascii=False))
         response.raise_for_status()
         return
-    session = CPUSession()
+    if args.dataset_version == "lumae_ads_d500":
+        from .incremental_session import IncrementalSession
+        session = IncrementalSession()
+    else:
+        session = CPUSession()
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
             try:
@@ -233,7 +244,15 @@ def main():
             pass
     print(json.dumps({"session_id": session.session_id, "accepted_preserved": len(session.frozen),
                       "prefetch": 16, "download_workers": 6, "decode_workers": 3}), flush=True)
-    HTTPServer(("127.0.0.1", args.port), Handler).serve_forever()
+    server = HTTPServer(("127.0.0.1", args.port), Handler)
+    try:
+        server.serve_forever()
+    finally:
+        server.server_close()
+        if hasattr(session, "close"):
+            session.close()
+        else:
+            session.pool.shutdown(wait=True, cancel_futures=True)
 
 
 if __name__ == "__main__":

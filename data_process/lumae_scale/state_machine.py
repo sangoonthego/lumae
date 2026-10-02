@@ -47,25 +47,30 @@ VALID_TRANSITIONS: Dict[CandidateStatus, Set[CandidateStatus]] = {
         CandidateStatus.SOURCE_READY,
     },
     CandidateStatus.SOURCE_READY: {
+        CandidateStatus.DOWNLOAD_DEFERRED,
         CandidateStatus.VISUAL_INDEX_READY,
         CandidateStatus.REJECTED,  # Frame extraction failure / corrupt file
     },
     CandidateStatus.VISUAL_INDEX_READY: {
+        CandidateStatus.DOWNLOAD_DEFERRED,
         CandidateStatus.AWAITING_VISUAL_INSPECTION,
         CandidateStatus.ANNOTATION_CANDIDATE_READY,
         CandidateStatus.REJECTED,
     },
     CandidateStatus.AWAITING_VISUAL_INSPECTION: {
+        CandidateStatus.DOWNLOAD_DEFERRED,
         CandidateStatus.ANNOTATION_CANDIDATE_READY,
         CandidateStatus.AWAITING_INTERVAL_VERIFICATION,
         CandidateStatus.REJECTED,  # Agent rejects video (no valid event)
     },
     CandidateStatus.ANNOTATION_CANDIDATE_READY: {
+        CandidateStatus.DOWNLOAD_DEFERRED,
         CandidateStatus.AWAITING_INTERVAL_VERIFICATION,
         CandidateStatus.ACCEPTED,
         CandidateStatus.REJECTED,
     },
     CandidateStatus.AWAITING_INTERVAL_VERIFICATION: {
+        CandidateStatus.DOWNLOAD_DEFERRED,
         CandidateStatus.ACCEPTED,
         CandidateStatus.REJECTED,  # Verifier failed
         CandidateStatus.ANNOTATION_CANDIDATE_READY,  # Re-evaluate

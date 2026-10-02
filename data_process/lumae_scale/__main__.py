@@ -20,6 +20,7 @@ def main() -> None:
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--max-candidates", type=int)
     parser.add_argument("--package-colab", action="store_true")
+    parser.add_argument("--shadow-d500", action="store_true")
     parser.add_argument("--prefetch", type=int, help="Prepare this many next source videos concurrently")
     parser.add_argument("--download-only", action="store_true", help="Skip ffmpeg visual cache during prefetch")
     parser.add_argument("--download-workers", type=int, default=4)
@@ -31,6 +32,19 @@ def main() -> None:
     parser.add_argument("--precision", default="float32")
     parser.add_argument("--batch-size", type=int, default=1)
     args = parser.parse_args()
+    if args.target_videos == 500 or args.shadow_d500:
+        from .layout import BuildLayout
+        from .incremental import package_incremental
+        from .incremental_shadow import replay
+        layout = BuildLayout()
+        if args.shadow_d500:
+            result = replay(layout)
+        elif args.package_colab:
+            result = package_incremental(layout)
+        else:
+            result = run(target=500, seed=args.seed, resume=args.resume, max_candidates=args.max_candidates, layout=layout)
+        print(json.dumps(result, indent=2))
+        return
     provider = None
     if args.provider_command:
         provider = LocalCommandProvider(shlex.split(args.provider_command),

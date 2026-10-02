@@ -34,8 +34,65 @@ def portable_copy(value):
     return value
 
 
-def accepted_records() -> list[dict]:
-    return [read_json(p) for p in sorted(ACCEPTED.glob("*.json"))]
+def accepted_records(directory: Path | None = None) -> list[dict]:
+    return [read_json(p) for p in sorted((directory or ACCEPTED).glob("*.json"))]
+
+
+def validate_annotation(record: dict, *, visual_cache=None) -> None:
+    source = resolve_path(record["source_video_path"])
+    if not source.is_file() or digest(source) != record["source_video_sha256"]:
+        raise ValueError("Missing or changed source video")
+    if query_errors(record["query"]) or interval_errors(*record["window"], record["duration"]):
+        raise ValueError("Invalid accepted query or interval")
+    if record.get("query_sanitation") != {"passed": True, "errors": []}:
+        raise ValueError("Accepted query lacks sanitation result")
+    phase = record.get("approximate_event_phase_seconds", [])
+    if len(phase) != 2 or interval_errors(*phase, record["duration"]):
+        raise ValueError("Invalid visually inspected coarse event phase")
+    if not record.get("visual_evidence") or not record.get("verifier", {}).get("pass"):
+        raise ValueError("Missing visual inspection/verification")
+    index_path = (visual_cache or VISUAL_CACHE) / record["source_video_id"] / "metadata.json"
+    if not index_path.is_file() or digest(index_path) != record["visual_index_sha256"]:
+        raise ValueError("Missing or changed visual index")
+    for sheet in record["visual_evidence"]["contact_sheets"]:
+        if not (index_path.parent / sheet).is_file():
+            raise ValueError("Missing inspected contact sheet")
+    verification_image = resolve_path(record["verification_image_path"])
+    if not verification_image.is_file() or digest(verification_image) != record["verification_image_sha256"]:
+        raise ValueError("Missing or changed before/inside/after inspection image")
+    semantic_path = resolve_path(record["semantic_artifact_path"])
+    if not semantic_path.is_file() or digest(semantic_path) != record["semantic_artifact_sha256"]:
+        raise ValueError("Missing or changed frozen semantic_v3 prediction")
+    if record["semantic_v3_prediction_sha256"] != record["semantic_artifact_sha256"]:
+        raise ValueError("Semantic prediction checksum mismatch")
+    prediction = read_json(semantic_path)
+    if (prediction.get("query") != record["query"]
+            or [prediction.get("start"), prediction.get("end")] != record["window"]
+            or prediction.get("semantic_v3_algorithm_sha256") != ALGORITHM_SHA256):
+        raise ValueError("Semantic prediction does not match accepted sample")
+    expected_provenance = {
+        "query_source": "AI_GENERATED",
+        "query_review_status": "AI_AUTO_ACCEPTED_FOR_TRAINING",
+        "temporal_label_source": "SEMANTIC_V3_PSEUDO_LABEL",
+        "review_provenance": "AI_PSEUDO_LABELED",
+        "reviewer_id": "AI_PIPELINE",
+        "semantic_v3_algorithm_sha256": ALGORITHM_SHA256,
+    }
+    if any(record.get(key) != value for key, value in expected_provenance.items()):
+        raise ValueError("Fake human provenance in new sample")
+    if not record.get("query_provider_config"):
+        raise ValueError("Query provider/model provenance missing")
+
+
+def canonical_row(record: dict, qid: str) -> dict:
+    return {"qid": qid, "vid": f"lumae_ads_{record['source_video_id']}",
+                 "query": record["query"], "duration": record["duration"],
+                 "relevant_windows": [record["window"]], "relevant_clip_ids": None,
+                 "saliency_scores": None, "source": "adsqa", "intent": "product_demo",
+                 "original_id": qid,
+                 "metadata": portable_copy({**{k: v for k, v in record.items() if k not in
+                                  {"query", "duration", "window"}},
+                              "video_filename": Path(record["source_video_path"]).name})}
 
 
 def validate_complete(records: list[dict], target: int = 200) -> tuple[list[dict], list[dict]]:
@@ -60,60 +117,11 @@ def validate_complete(records: list[dict], target: int = 200) -> tuple[list[dict
     if len({r["query"].strip().casefold() for r in records}) != 152:
         raise ValueError("Duplicate new temporal queries")
     for record in records:
-        source = resolve_path(record["source_video_path"])
-        if not source.is_file() or digest(source) != record["source_video_sha256"]:
-            raise ValueError("Missing or changed source video")
-        if query_errors(record["query"]) or interval_errors(*record["window"], record["duration"]):
-            raise ValueError("Invalid accepted query or interval")
-        if record.get("query_sanitation") != {"passed": True, "errors": []}:
-            raise ValueError("Accepted query lacks sanitation result")
-        phase = record.get("approximate_event_phase_seconds", [])
-        if len(phase) != 2 or interval_errors(*phase, record["duration"]):
-            raise ValueError("Invalid visually inspected coarse event phase")
-        if not record.get("visual_evidence") or not record.get("verifier", {}).get("pass"):
-            raise ValueError("Missing visual inspection/verification")
-        index_path = VISUAL_CACHE / record["source_video_id"] / "metadata.json"
-        if not index_path.is_file() or digest(index_path) != record["visual_index_sha256"]:
-            raise ValueError("Missing or changed visual index")
-        for sheet in record["visual_evidence"]["contact_sheets"]:
-            if not (index_path.parent / sheet).is_file():
-                raise ValueError("Missing inspected contact sheet")
-        verification_image = resolve_path(record["verification_image_path"])
-        if not verification_image.is_file() or digest(verification_image) != record["verification_image_sha256"]:
-            raise ValueError("Missing or changed before/inside/after inspection image")
-        semantic_path = resolve_path(record["semantic_artifact_path"])
-        if not semantic_path.is_file() or digest(semantic_path) != record["semantic_artifact_sha256"]:
-            raise ValueError("Missing or changed frozen semantic_v3 prediction")
-        if record["semantic_v3_prediction_sha256"] != record["semantic_artifact_sha256"]:
-            raise ValueError("Semantic prediction checksum mismatch")
-        prediction = read_json(semantic_path)
-        if (prediction.get("query") != record["query"]
-                or [prediction.get("start"), prediction.get("end")] != record["window"]
-                or prediction.get("semantic_v3_algorithm_sha256") != ALGORITHM_SHA256):
-            raise ValueError("Semantic prediction does not match accepted sample")
-        expected_provenance = {
-            "query_source": "AI_GENERATED",
-            "query_review_status": "AI_AUTO_ACCEPTED_FOR_TRAINING",
-            "temporal_label_source": "SEMANTIC_V3_PSEUDO_LABEL",
-            "review_provenance": "AI_PSEUDO_LABELED",
-            "reviewer_id": "AI_PIPELINE",
-            "semantic_v3_algorithm_sha256": ALGORITHM_SHA256,
-        }
-        if any(record.get(key) != value for key, value in expected_provenance.items()):
-            raise ValueError("Fake human provenance in new sample")
-        if not record.get("query_provider_config"):
-            raise ValueError("Query provider/model provenance missing")
+        validate_annotation(record)
     rows = []
     for index, record in enumerate(sorted(records, key=lambda r: r["source_video_id"]), 49):
         qid = f"lumae_ads_d200_{index:04d}"
-        rows.append({"qid": qid, "vid": f"lumae_ads_{record['source_video_id']}",
-                     "query": record["query"], "duration": record["duration"],
-                     "relevant_windows": [record["window"]], "relevant_clip_ids": None,
-                     "saliency_scores": None, "source": "adsqa", "intent": "product_demo",
-                     "original_id": qid,
-                     "metadata": portable_copy({**{k: v for k, v in record.items() if k not in
-                                      {"query", "duration", "window"}},
-                                  "video_filename": Path(record["source_video_path"]).name})})
+        rows.append(canonical_row(record, qid))
     all_rows = old + rows
     if len(all_rows) != target or len({r["qid"] for r in all_rows}) != target or len({r["vid"] for r in all_rows}) != target:
         raise ValueError("D200 count/uniqueness mismatch")
