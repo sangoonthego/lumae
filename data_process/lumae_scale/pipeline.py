@@ -129,12 +129,12 @@ def run(*, target: int = 200, seed: int = SEED, resume: bool = True,
     clip_runtime = get_clip_runtime()
     attempted = 0
     for row in state["candidates"]:
-        if len(records()) == (layout.new_count if layout else 152):
-            manifest = freeze_incremental(layout) if layout else freeze(target, seed)
-            return finish({"status": "COMPLETE", "dataset_sha256": manifest["dataset_sha256"]})
         video_id = row["source_video_id"]
         if candidate_id is not None and video_id != candidate_id:
             continue
+        if len(records()) == (layout.new_count if layout else 152):
+            manifest = freeze_incremental(layout) if layout else freeze(target, seed)
+            return finish({"status": "COMPLETE", "dataset_sha256": manifest["dataset_sha256"]})
         if (accepted_dir / f"{video_id}.json").is_file() or row["status"] == "rejected":
             continue
         if max_candidates is not None and attempted >= max_candidates:
