@@ -204,9 +204,9 @@ def test_short_event_preservation():
     assert window == [12.2, 13.5]
 
 
-def test_development_benchmark_gate_and_0010_resolution():
+def test_development_benchmark_gate_and_0010_resolution(isolated_benchmark_output):
     """Verify development benchmark achieves >= 0.70 mean tIoU, >= 7/8 semantic correct, and fixes 0010."""
-    report = run_development_benchmark()
+    report = isolated_benchmark_output(run_development_benchmark)
     agg = report["aggregate"]
     gate = report["quality_gate"]
 

@@ -33,7 +33,8 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
-
+research_outputs
+audit_outputs
 # env files (can opt-in for committing if needed)
 .env*
 !.env.example

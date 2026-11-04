@@ -131,9 +131,9 @@ def test_human_gt_freeze_schema_and_manifest():
     assert gt_manifest["query_freeze_sha256"] == BASELINE_FROZEN_QUERY_SHA256
 
 
-def test_cryptographic_chain_verification():
+def test_cryptographic_chain_verification(isolated_benchmark_output):
     """Verify entire cryptographic chain from selection to prediction and GT freeze."""
-    data = run_clean_blind5_benchmark()
+    data = isolated_benchmark_output(run_clean_blind5_benchmark)
     chain = data["cryptographic_chain"]
     assert chain["chain_valid"] is True
     assert chain["selection_manifest_sha256"] == BASELINE_SELECTION_SHA256
@@ -154,9 +154,9 @@ def test_temporal_metric_calculation_accuracy():
     assert compute_temporal_iou([0.0, 10.0], [5.0, 15.0]) == 0.3333
 
 
-def test_selected_candidate_evaluation_and_oracle_diagnostic():
+def test_selected_candidate_evaluation_and_oracle_diagnostic(isolated_benchmark_output):
     """Verify evaluation strictly uses selected candidate, and oracle diagnostic is separate."""
-    data = run_clean_blind5_benchmark()
+    data = isolated_benchmark_output(run_clean_blind5_benchmark)
     for r in data["per_sample"]:
         assert r["selected_candidate_rank"] == 1
         assert r["selected_candidate_id"] in ("A", "B", "C", "D")
@@ -166,9 +166,9 @@ def test_selected_candidate_evaluation_and_oracle_diagnostic():
         assert r["oracle_best_candidate_tiou"] >= r["tiou"] - 1e-4
 
 
-def test_clean_blind5_gate_pass():
+def test_clean_blind5_gate_pass(isolated_benchmark_output):
     """Verify that semantic_v3 passes all clean-query blind generalization criteria."""
-    data = run_clean_blind5_benchmark()
+    data = isolated_benchmark_output(run_clean_blind5_benchmark)
     gate = data["gate_evaluation"]
     agg = data["aggregate_metrics"]
 

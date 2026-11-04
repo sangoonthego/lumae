@@ -99,9 +99,9 @@ def test_algorithm_freeze_verification():
     assert data["combined_source_sha256"] == BASELINE_V3_ALG_SHA256
 
 
-def test_query_alignment_and_quality_classification():
+def test_query_alignment_and_quality_classification(isolated_benchmark_output):
     """Verify query template failures are properly detected and categorized."""
-    report = run_fresh5_benchmark()
+    report = isolated_benchmark_output(run_fresh5_benchmark)
     qq = report["query_generation_quality"]
 
     # 3 samples have INCORRECT_FOR_VIDEO template failures:
@@ -120,9 +120,9 @@ def test_query_alignment_and_quality_classification():
     assert per_sample["lumae_ads_pilot_0043"]["fair_comparison"] is False
 
 
-def test_oracle_vs_selected_diagnostic_separation():
+def test_oracle_vs_selected_diagnostic_separation(isolated_benchmark_output):
     """Verify selected candidate is strictly evaluated for model score, not oracle best."""
-    report = run_fresh5_benchmark()
+    report = isolated_benchmark_output(run_fresh5_benchmark)
     per_sample = {r["sample_id"]: r for r in report["per_sample"]}
 
     # Sample 0043: V3 selected Candidate A ([2.2, 7.5], tIoU=0.0) based on query "connects accessory"
@@ -133,9 +133,9 @@ def test_oracle_vs_selected_diagnostic_separation():
     assert s0043["oracle_best_candidate_tiou"] > s0043["tiou"]
 
 
-def test_gate_decision_inconclusive_query_shift():
+def test_gate_decision_inconclusive_query_shift(isolated_benchmark_output):
     """Verify gate decision returns INCONCLUSIVE_QUERY_SHIFT when comparable samples < 4."""
-    report = run_fresh5_benchmark()
+    report = isolated_benchmark_output(run_fresh5_benchmark)
     assert report["comparable_sample_count"] == 2
     assert report["gate_result"] == "INCONCLUSIVE_QUERY_SHIFT"
 

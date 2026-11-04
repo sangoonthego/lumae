@@ -157,8 +157,11 @@ def test_deterministic_clean_blind5_selection(tmp_path, monkeypatch):
         assert sid not in LEGACY_SEED42_HOLDOUT_SAMPLES
 
 
-def test_query_sanitation_worklist():
+def test_query_sanitation_worklist(tmp_path, monkeypatch):
     """Verify current worklist reflects the current pilot status."""
+    source = get_annotations_dir() / "human_primary.csv"
+    (tmp_path / "human_primary.csv").write_bytes(source.read_bytes())
+    monkeypatch.setenv("LUMAE_ANNOTATIONS_DIR", str(tmp_path))
     worklist = generate_query_sanitation_worklist()
     primary_rows = list(csv.DictReader((REPO_ROOT / "local_data/annotations/lumae_ads/human_primary.csv").open(encoding="utf-8-sig")))
     assert len(worklist) == sum(r["review_status"] == "DRAFT" for r in primary_rows)
@@ -343,11 +346,27 @@ def test_all_clean_blind_reviewed():
         assert r.reviewer_id.startswith("human_")
 
 
-def test_query_freeze_complete():
+def test_query_freeze_complete(tmp_path, monkeypatch):
     """9. Verify freeze_clean_blind_queries succeeds with CLEAN_BLIND_QUERIES_FROZEN_BEFORE_V3_INFERENCE."""
+    # This freezer writes a timestamped manifest. Never invoke it against the
+    # real historical research directory during regression tests.
+    production_manifest = get_manifests_dir() / "semantic_v3_clean_query_blind5_query_freeze.json"
+    before = production_manifest.read_bytes()
+    reviews_bytes = get_query_reviews_path().read_bytes()
+    selection_bytes = (get_manifests_dir() / "semantic_v3_clean_query_blind5_selection.json").read_bytes()
+    annotations = tmp_path / "annotations"
+    manifests = tmp_path / "manifests"
+    annotations.mkdir()
+    manifests.mkdir()
+    (annotations / "query_reviews.csv").write_bytes(reviews_bytes)
+    (manifests / "semantic_v3_clean_query_blind5_selection.json").write_bytes(selection_bytes)
+    monkeypatch.setenv("LUMAE_ANNOTATIONS_DIR", str(annotations))
+    monkeypatch.setenv("LUMAE_MANIFESTS_DIR", str(manifests))
     res = check_and_freeze_clean_blind_queries()
     assert res["status"] == "CLEAN_BLIND_QUERIES_FROZEN_BEFORE_V3_INFERENCE"
     assert res["manifest"]["reviewer_count"] == 1
+    assert production_manifest.read_bytes() == before
+    assert (manifests / production_manifest.name).is_file()
 
 
 def test_atomic_write(tmp_path):

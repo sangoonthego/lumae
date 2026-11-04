@@ -187,7 +187,7 @@ def test_quality_gate_evaluation_logic():
     assert (mean_tiou_fail >= 0.60) is False
 
 
-def test_source_files_remain_unmutated_after_v2_benchmark():
+def test_source_files_remain_unmutated_after_v2_benchmark(tmp_path):
     """Verify that evaluating semantic_v2 leaves all source annotation files untouched."""
     human_path = get_annotations_dir() / "human_primary.csv"
     ai_path = get_annotations_dir() / "ai_preannotations.csv"
@@ -198,7 +198,7 @@ def test_source_files_remain_unmutated_after_v2_benchmark():
     sha_holdout_before = get_file_sha256(holdout_path)
 
     # Execute benchmark evaluation
-    report = evaluate_semantic_v2_benchmark()
+    report = evaluate_semantic_v2_benchmark(output_dir=tmp_path)
     assert report["quality_gate"]["gate_result"] == "PASS_SEMANTIC_PREANNOTATOR"
 
     sha_human_after = get_file_sha256(human_path)

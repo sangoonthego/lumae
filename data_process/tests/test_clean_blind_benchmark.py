@@ -143,9 +143,9 @@ def test_tiou_single_and_multi_window():
     assert round(best_tiou, 4) == 0.7609
 
 
-def test_clean_blind_benchmark_execution_and_metrics():
+def test_clean_blind_benchmark_execution_and_metrics(isolated_benchmark_output):
     """Verify live execution of evaluate_clean_blind_benchmark against frozen artifacts."""
-    report = evaluate_clean_blind_benchmark()
+    report = isolated_benchmark_output(evaluate_clean_blind_benchmark)
 
     # Pre-condition verifications
     assert report["verification"]["prediction_hash_match"] is True
