@@ -38,8 +38,8 @@ def accepted_records(directory: Path | None = None) -> list[dict]:
     return [read_json(p) for p in sorted((directory or ACCEPTED).glob("*.json"))]
 
 
-def validate_annotation(record: dict, *, visual_cache=None) -> None:
-    source = resolve_path(record["source_video_path"])
+def validate_annotation(record: dict, *, visual_cache=None, root=None) -> None:
+    source = resolve_path(record["source_video_path"], root=root)
     if not source.is_file() or digest(source) != record["source_video_sha256"]:
         raise ValueError("Missing or changed source video")
     if query_errors(record["query"]) or interval_errors(*record["window"], record["duration"]):
@@ -57,10 +57,10 @@ def validate_annotation(record: dict, *, visual_cache=None) -> None:
     for sheet in record["visual_evidence"]["contact_sheets"]:
         if not (index_path.parent / sheet).is_file():
             raise ValueError("Missing inspected contact sheet")
-    verification_image = resolve_path(record["verification_image_path"])
+    verification_image = resolve_path(record["verification_image_path"], root=root)
     if not verification_image.is_file() or digest(verification_image) != record["verification_image_sha256"]:
         raise ValueError("Missing or changed before/inside/after inspection image")
-    semantic_path = resolve_path(record["semantic_artifact_path"])
+    semantic_path = resolve_path(record["semantic_artifact_path"], root=root)
     if not semantic_path.is_file() or digest(semantic_path) != record["semantic_artifact_sha256"]:
         raise ValueError("Missing or changed frozen semantic_v3 prediction")
     if record["semantic_v3_prediction_sha256"] != record["semantic_artifact_sha256"]:

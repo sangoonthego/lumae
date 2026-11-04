@@ -17,7 +17,8 @@ WRAPPER_VERSION = "d200_clip_boundary_v3_evidence_anchored"
 
 
 def localize(video_id: str, query: str, events: list[dict], duration: float,
-             expected_event_index: int, timer=None, clip_runtime=None) -> dict:
+             expected_event_index: int, timer=None, clip_runtime=None,
+             visual_cache=None) -> dict:
     verify_frozen_ranker(ROOT)
     if not events:
         raise ValueError("No visually inspected candidates")
@@ -38,15 +39,15 @@ def localize(video_id: str, query: str, events: list[dict], duration: float,
     with timer.stage("refinement") if timer else nullcontext():
         return _refine(video_id, query, candidates, selected, margin, confidence,
                        reason, duration, events[expected_event_index],
-                       clip_runtime=clip_runtime)
+                       clip_runtime=clip_runtime, visual_cache=visual_cache)
 
 
 def _refine(video_id, query, candidates, selected, margin, confidence, reason,
-            duration, selected_event, clip_runtime=None):
+            duration, selected_event, clip_runtime=None, visual_cache=None):
     from .clip_runtime import get_clip_runtime
     from .visual_index import clip_consistency
 
-    array = np.load(VISUAL_CACHE / video_id / "clip_features.npz")
+    array = np.load((visual_cache or VISUAL_CACHE) / video_id / "clip_features.npz")
     features, times = array["features"], array["timestamps"]
     runtime = clip_runtime or get_clip_runtime("ViT-B/32", device="cpu")
     vector = runtime.encode_text(query)[0]
@@ -92,4 +93,5 @@ def _refine(video_id, query, candidates, selected, margin, confidence, reason,
             "clip_peak_timestamp": float(times[best]),
             "refinement_evidence_timestamps": evidence_times,
             "clip_signals": clip_consistency(video_id, query, start, end,
-                                             clip_runtime=runtime, query_vector=vector)}
+                                             clip_runtime=runtime, query_vector=vector,
+                                             visual_cache=visual_cache)}

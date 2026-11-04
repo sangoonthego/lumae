@@ -21,9 +21,10 @@ SHEET_SIZE = 10
 
 
 def build_visual_index(video: Path, duration: float, video_sha256: str,
-                       timer=None, *, work: Path | None = None, strict: bool = False) -> dict:
+                       timer=None, *, work: Path | None = None, strict: bool = False,
+                       visual_cache: Path | None = None, root: Path | None = None) -> dict:
     video_id = video.stem
-    out = VISUAL_CACHE / video_id
+    out = (visual_cache or VISUAL_CACHE) / video_id
     metadata_path = out / "metadata.json"
     if metadata_path.exists():
         try:
@@ -83,7 +84,7 @@ def build_visual_index(video: Path, duration: float, video_sha256: str,
             sheet_path = sheets_dir / f"contact_sheet_{batch_idx:03d}.jpg"
             sheet.save(sheet_path, quality=86)
             sheets.append(sheet_path.relative_to(out).as_posix())
-    record = {"video_id": video_id, "video_path": to_repo_relative(video), "video_sha256": video_sha256,
+    record = {"video_id": video_id, "video_path": to_repo_relative(video, root=root or ROOT), "video_sha256": video_sha256,
               "duration": duration, "sampling_step_seconds": STEP, "frames": records,
               "contact_sheets": sheets, "feature_extractor": "CLIP ViT-B/32",
               "clip_features_status": "pending"}
@@ -99,9 +100,10 @@ def build_visual_index(video: Path, duration: float, video_sha256: str,
 
 def extract_clip_features(video_id: str, *, model_path: str = "ViT-B/32",
                           device: str = "cpu", batch_size: int = 16,
-                          timer=None, clip_runtime=None, strict: bool = False) -> dict:
+                          timer=None, clip_runtime=None, strict: bool = False,
+                          visual_cache: Path | None = None) -> dict:
     """Cache normalized official OpenAI CLIP embeddings; load weights explicitly."""
-    out = VISUAL_CACHE / video_id
+    out = (visual_cache or VISUAL_CACHE) / video_id
     metadata_path = out / "metadata.json"
     record = read_json(metadata_path)
     feature_path = out / "clip_features.npz"
@@ -145,13 +147,15 @@ def _extract_clip_features(record: dict, out: Path, metadata_path: Path,
 
 def clip_consistency(video_id: str, query: str, start: float, end: float,
                      *, model_path: str = "ViT-B/32", device: str = "cpu",
-                     clip_runtime=None, query_vector: np.ndarray | None = None) -> dict:
+                     clip_runtime=None, query_vector: np.ndarray | None = None,
+                     visual_cache: Path | None = None) -> dict:
     from .clip_runtime import get_clip_runtime
 
-    record = read_json(VISUAL_CACHE / video_id / "metadata.json")
+    cache = visual_cache or VISUAL_CACHE
+    record = read_json(cache / video_id / "metadata.json")
     if record.get("clip_features_status") != "complete":
         raise ValueError("CLIP visual index is incomplete")
-    array = np.load(VISUAL_CACHE / video_id / "clip_features.npz")
+    array = np.load(cache / video_id / "clip_features.npz")
     features = array["features"]
     times = array["timestamps"]
 

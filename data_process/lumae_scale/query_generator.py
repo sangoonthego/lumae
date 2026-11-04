@@ -69,8 +69,8 @@ class LocalCommandProvider(QueryGenerator):
         return output["events"]
 
 
-def validate_events(video_id: str, events: list[dict], duration: float) -> list[dict]:
-    index = read_json(VISUAL_CACHE / video_id / "metadata.json")
+def validate_events(video_id: str, events: list[dict], duration: float, *, visual_cache=None) -> list[dict]:
+    index = read_json((visual_cache or VISUAL_CACHE) / video_id / "metadata.json")
     sheets = set(index["contact_sheets"])
     sample_times = {round(x["timestamp"], 3) for x in index["frames"]}
     seen = set()
