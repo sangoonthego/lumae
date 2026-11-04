@@ -1,0 +1,16 @@
+{
+  "version": "lumae_ads_d1000_v1",
+  "parent_version": "lumae_ads_d500",
+  "parent_dir": "local_data/datasets/lumae_ads_d500",
+  "parent_asset_root": ".",
+  "data_root": "E:/LUMAE",
+  "target_videos": 1000,
+  "seed": 20260930,
+  "split_policy": "explicit_campaign_assignments",
+  "planning_targets": {"train": 700, "val": 150, "test": 150},
+  "max_duration": 150,
+  "max_download_retries": 5,
+  "network_execution_authorized": false,
+  "annotation_contract": "d200_pipeline_v1; frozen Semantic V3; explicit visual evidence and verifier",
+  "test_queries_minimum": 300
+}
