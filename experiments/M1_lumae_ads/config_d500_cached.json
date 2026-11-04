@@ -1,0 +1,33 @@
+{
+  "dataset": "lumae_ads_d500",
+  "canonical_sha256": "4d514b608d6cffdb05a8a37e28e2b4838c4efd7731498254535b10c1efa5c5ba",
+  "upstream_commit": "b7e553ac3b0c898ee6b85e03ee507c064eab89ca",
+  "m0_sha256": "ad5facec03008800536466c7d33f9232c3db2b71a1bd445073957bd6f4d0edbf",
+  "split_sha256": {
+    "train": "4b72576b64839e134e185facf29c4b18908b7c1fc177960fcba221f8954d8d69",
+    "val": "ac0408795cdb16562176f2afe536893ac6484e62eca8d750dd6b9c119af0a2cb"
+  },
+  "counts": {"train": 440, "val": 30},
+  "seed": 20260930,
+  "epochs": 50,
+  "patience": 10,
+  "batch_size": 4,
+  "learning_rate": 0.00001,
+  "weight_decay": 0.0001,
+  "gradient_clip": 0.1,
+  "amp": true,
+  "lr_step_size": 400,
+  "lr_gamma": 0.1,
+  "normalize_video": true,
+  "normalize_text": true,
+  "max_video_length": 75,
+  "max_query_length": 32,
+  "clip_length": 2,
+  "video_key": "features",
+  "text_key": "last_hidden_state",
+  "video_cache_dim": 512,
+  "text_dim": 512,
+  "selection_primary": "R1@0.5",
+  "selection_tiebreak": "mIoU",
+  "test_used_for_selection": false
+}
