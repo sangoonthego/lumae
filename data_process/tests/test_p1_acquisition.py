@@ -95,6 +95,44 @@ def test_terminal_access_failures_stop_at_consecutive_threshold(setup):
     assert result['http_requests']==3 and result['rejected_videos']==3
     assert result['stop_reason']=='Consecutive failed request threshold'
 
+def test_operator_connection_recovery_keeps_attempts_and_rearms_stop(setup,monkeypatch):
+    monkeypatch.setattr(a.time,'sleep',lambda _:None)
+    responses=[Response(chunks=[str(i).encode()]) for i in range(5)]
+    p,http=make(setup,responses)
+
+    def fail(url,**_):
+        http.calls.append((url,{}))
+        raise requests.ConnectionError()
+
+    get=http.get
+    http.get=lambda url,**kw: get(url,**kw) if len(http.calls)<5 else fail(url,**kw)
+    assert p.run()['http_requests']==8
+    original=p.attempts()
+    budget_clock=(p.work/'budget_clock.json').read_bytes()
+    assert p.run()['http_requests']==8
+    resumed=p.run(resume_connection_failures=True)
+    assert resumed['http_requests']==11
+    assert resumed['stop_reason']=='Consecutive failed request threshold'
+    assert p.attempts()[:8]==original
+    assert (p.work/'budget_clock.json').read_bytes()==budget_clock
+    assert max(sum(a['source_video_id']==row['source_video_id'] for a in p.attempts()) for row in p.plan['candidates'])==2
+    assert http.calls[8][0]==http.calls[7][0] and http.calls[8][0]!=http.calls[6][0]
+    assert p.run()['http_requests']==11
+    with pytest.raises(ValueError,match='already recorded'):
+        p.run(resume_connection_failures=True)
+    assert len(http.calls)==11
+
+
+def test_operator_connection_recovery_rejects_http_rate_limit(setup,monkeypatch):
+    monkeypatch.setattr(a.time,'sleep',lambda _:None)
+    p,http=make(setup,[Response(429,headers={'Retry-After':'10'}) for _ in range(3)])
+    assert p.run()['http_requests']==3
+    with pytest.raises(ValueError,match='pre-response connection failures'):
+        p.run(resume_connection_failures=True)
+    assert len(http.calls)==3
+    assert not (p.work/'logs/connection_recovery.json').exists()
+
+
 def test_disk_reserve_and_config_identity_fail_closed(setup,monkeypatch):
     p,http=make(setup,[])
     monkeypatch.setattr(a.shutil,'disk_usage',lambda _:type('Usage',(),{'free':0})())

@@ -336,13 +336,47 @@ class Pilot:
         source.update(status='ANNOTATION_ACCEPTED',annotation_status='AI_PSEUDO_LABELED',human_review_status='PENDING',accepted_annotation_path=str(config.work/'accepted'/(sid+'.json')))
         self.checkpoint(source);self.event('ANNOTATION_ACCEPTED',source_video_id=sid,human_verified=False)
 
-    def run(self,*,max_wave=None):
+    def run(self,*,max_wave=None,resume_connection_failures=False):
         if not self.live:raise PermissionError('Use plan for a network-denied dry run')
         self.initialize()
         with run_lock(self.work/'logs/run.lock'):
-            return self._run_locked(max_wave)
+            return self._run_locked(max_wave,resume_connection_failures)
 
-    def _run_locked(self,max_wave):
+    @staticmethod
+    def trailing_failures(attempts):
+        failures=[]
+        for attempt in reversed(attempts):
+            if attempt['status']!='FAILED':break
+            failures.append(attempt)
+        return failures
+
+    def connection_recovery_cutoff(self,requested):
+        marker=self.work/'logs/connection_recovery.json'
+        attempts=self.attempts()
+        if marker.exists():
+            if requested:raise ValueError('Connection recovery already recorded for this batch')
+            recovery=read_json(marker)
+            cutoff=recovery['attempt_count']
+            if not 0<cutoff<=len(attempts) or attempts[cutoff-1]['attempt_id']!=recovery['last_attempt_id']:
+                raise ValueError('Connection recovery does not match the attempt journal')
+            return cutoff
+        if not requested:return 0
+        failures=self.trailing_failures(attempts)
+        if len(failures)!=self.c['max_consecutive_failures'] or any(
+            a.get('reason')!='ConnectionError' or a.get('http_status') is not None
+            or a.get('retry_after_seconds') or a['http_requests']!=1 for a in failures
+        ):
+            raise ValueError('Recovery requires a threshold stop with only pre-response connection failures')
+        self.check_limits()
+        if sum(a['http_requests'] for a in attempts)>=self.c['max_http_requests']:
+            raise ValueError('Connection recovery requires remaining HTTP budget')
+        cutoff=len(attempts)
+        immutable_write(marker,json_bytes({'utc':utc(),'attempt_count':cutoff,'last_attempt_id':attempts[-1]['attempt_id'],
+                                          'reason':'OPERATOR_AUTHORIZED_CONNECTION_RECOVERY'}))
+        return cutoff
+
+    def _run_locked(self,max_wave,resume_connection_failures=False):
+        cutoff=self.connection_recovery_cutoff(resume_connection_failures)
         self.session=self.session or requests.Session()
         self.event('RUN_STARTED',network_execution_authorized=True)
         stop='CANDIDATE_BUDGET';wave=0
@@ -357,11 +391,8 @@ class Pilot:
                 if self.plan.get('previous_accepted_sources',0)+sum(r['status'] in ('SOURCE_ACCEPTED','ANNOTATION_ACCEPTED') for r in records.values())>=self.c['target_accepted']:stop='ACCEPTED_TARGET';break
                 if max_wave is not None and wave>=max_wave:stop='BOUNDED_WAVE';break
                 attempts=self.attempts();recent=[a for a in attempts if a['status'] in ('FAILED','DOWNLOADED')]
-                failures=0
-                for a in reversed(recent):
-                    if a['status']!='FAILED':break
-                    failures+=1
-                if failures>=self.c['max_consecutive_failures']:raise BudgetStop('Consecutive failed request threshold')
+                current=[a for a in attempts[cutoff:] if a['status'] in ('FAILED','DOWNLOADED')]
+                if len(self.trailing_failures(current))>=self.c['max_consecutive_failures']:raise BudgetStop('Consecutive failed request threshold')
                 if len(recent)>=self.c.get('domain_error_min_requests',5) and sum(a['status']=='FAILED' for a in recent)/len(recent)>self.c['max_domain_error_rate']:raise BudgetStop('Domain error rate threshold')
                 self.check_limits();wave+=1
                 prior=[a for a in attempts if a['source_video_id']==sid]
@@ -377,11 +408,7 @@ class Pilot:
                     except (requests.RequestException,OSError) as e:
                         self.event('REQUEST_FAILURE',source_video_id=sid,error_type=type(e).__name__)
                         current=self.attempts()
-                        tail=0
-                        for a in reversed(current):
-                            if a['status']!='FAILED':break
-                            tail+=1
-                        if tail>=self.c['max_consecutive_failures']:raise BudgetStop('Consecutive failed request threshold')
+                        if len(self.trailing_failures(current[cutoff:]))>=self.c['max_consecutive_failures']:raise BudgetStop('Consecutive failed request threshold')
                         delay=max(min(60,2**(len(prior)+retry)*5),current[-1].get('retry_after_seconds',0))
                         if retry+1<remaining:time.sleep(delay)
                 else:
