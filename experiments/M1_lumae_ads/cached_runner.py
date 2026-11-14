@@ -67,8 +67,10 @@ def dataset_type(upstream_root):
     from utils.basic_utils import l2_normalize_np_array
 
     class CachedDataset(StartEndDataset):
-        def __init__(self, annotations, feature_root, manifest, config):
+        def __init__(self, annotations, feature_root, manifest, config, *, resolve_feature=None):
             self.feature_root=Path(feature_root);self.manifest=manifest;self.recipe=config
+            self.resolve_feature = resolve_feature or (lambda kind, ident: feature_path(
+                self.feature_root, self.manifest[kind][str(ident)]))
             super().__init__(dset_name='hl',data_path=str(annotations),v_feat_dirs=[str(feature_root)],
                 q_feat_dir=str(feature_root),q_feat_type=config['text_key'],max_q_l=config['max_query_length'],
                 max_v_l=config['max_video_length'],ctx_mode='video_tef',normalize_v=config['normalize_video'],
@@ -85,10 +87,10 @@ def dataset_type(upstream_root):
                     raise ValueError('D500 E0 does not use fabricated saliency targets')
                 for kind,identity in [('video',row['vid']),('text',str(row['qid']))]:
                     if identity not in manifest[kind]:raise FileNotFoundError(f'Missing {kind} mapping: {identity}')
-                    feature_path(self.feature_root,manifest[kind][identity])
+                    self.resolve_feature(kind, identity)
 
         def array(self, kind, identity):
-            path=feature_path(self.feature_root,self.manifest[kind][str(identity)])
+            path=self.resolve_feature(kind, identity)
             key=self.recipe['video_key'] if kind=='video' else self.recipe['text_key']
             with np.load(path,allow_pickle=False) as z:
                 if set(z.files)!={key}:raise ValueError(f'Wrong NPZ keys: {path}')
@@ -208,6 +210,10 @@ def train(datasets,identity,upstream_root,checkpoint,output,resume=False):
         output.mkdir(parents=True,exist_ok=False)
         (output/'run_config.json').write_text(json.dumps({'fingerprint':fingerprint,'identity':identity,'source_revision':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'torch':torch.__version__,'numpy':np.__version__},indent=2))
     seed=cfg['seed'];random.seed(seed);np.random.seed(seed);torch.manual_seed(seed);torch.cuda.manual_seed_all(seed)
+    if cfg.get('deterministic'):
+        torch.backends.cudnn.benchmark=False
+        torch.backends.cudnn.deterministic=True
+        torch.use_deterministic_algorithms(True)
     model,criterion,opt=initialize_training_model(upstream_root,checkpoint,seed,'cuda')
     optimizer=torch.optim.AdamW(model.parameters(),lr=cfg['learning_rate'],weight_decay=cfg['weight_decay'])
     scheduler=torch.optim.lr_scheduler.StepLR(optimizer,step_size=cfg['lr_step_size'],gamma=cfg['lr_gamma'])
